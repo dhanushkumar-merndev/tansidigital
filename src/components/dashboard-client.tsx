@@ -125,6 +125,27 @@ function formatCompactNumber(value: number) {
   }).format(value);
 }
 
+function findAutocompleteSuggestion(options: string[], query: string) {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return "";
+
+  const normalizedQuery = trimmedQuery.toLowerCase();
+  const searchableQuery = normalizedQuery.replace(/[^a-z0-9]+/g, "");
+
+  return (
+    options.find((option) => {
+      const normalizedOption = option.toLowerCase();
+      const searchableOption = normalizedOption.replace(/[^a-z0-9]+/g, "");
+
+      return (
+        searchableOption.startsWith(searchableQuery) &&
+        searchableOption !== searchableQuery &&
+        normalizedOption !== normalizedQuery
+      );
+    }) ?? ""
+  );
+}
+
 function parseDate(date: string | null) {
   return date ? new Date(`${date}T00:00:00`) : null;
 }
@@ -294,6 +315,25 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
   const campaigns = Array.from(new Set(brandRows.map((row) => row.campaign).filter(Boolean))).sort();
 
+  const autocompleteRows = brandRows.filter((row) => {
+    const rowDate = parseDate(row.date);
+    const from = dateRange?.from ? startOfDay(dateRange.from) : null;
+    const to = dateRange?.to ? endOfDay(dateRange.to) : null;
+    const outOfRange =
+      (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
+
+    if (outOfRange) return false;
+    if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
+
+    return Boolean(row.adName);
+  });
+
+  const adNameSuggestions = Array.from(
+    new Set(autocompleteRows.map((row) => row.adName.trim()).filter(Boolean)),
+  ).sort((left, right) => left.localeCompare(right));
+
+  const autocompleteSuggestion = findAutocompleteSuggestion(adNameSuggestions, searchTerm);
+
   const filteredRows = brandRows.filter((row) => {
     const rowDate = parseDate(row.date);
     const from = dateRange?.from ? startOfDay(dateRange.from) : null;
@@ -402,6 +442,11 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     });
   }
 
+  function acceptAutocompleteSuggestion() {
+    if (!autocompleteSuggestion) return;
+    setSearchTerm(autocompleteSuggestion);
+  }
+
   const activeBrandAssets = getBrandAssets(brand);
 
   return (
@@ -480,13 +525,43 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               <FieldLabel htmlFor="ad-search">Search Ad Name</FieldLabel>
               <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 right-4 left-11 flex items-center overflow-hidden text-md leading-none"
+                >
+                  {searchTerm ? (
+                    <>
+                      <span className="whitespace-pre text-white">{searchTerm}</span>
+                      {autocompleteSuggestion ? (
+                        <span className="truncate whitespace-pre text-white/38">
+                          {autocompleteSuggestion.slice(searchTerm.length)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
                 <input
                   id="ad-search"
+                  name="ad-search"
+                  type="text"
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
+                  onKeyDown={(event) => {
+                    const selectionAtEnd =
+                      event.currentTarget.selectionStart === event.currentTarget.value.length &&
+                      event.currentTarget.selectionEnd === event.currentTarget.value.length;
+
+                    if (!autocompleteSuggestion || !selectionAtEnd) return;
+
+                    if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowRight") {
+                      event.preventDefault();
+                      acceptAutocompleteSuggestion();
+                    }
+                  }}
                   placeholder="Type ad name..."
                   autoComplete="off"
-                  className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm text-white outline-none placeholder:text-white/34"
+                  spellCheck={false}
+                  className="relative z-10 h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm leading-none text-transparent caret-white outline-none placeholder:text-white/34"
                 />
               </div>
             </Field>
