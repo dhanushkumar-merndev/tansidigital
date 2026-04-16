@@ -166,18 +166,30 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   }
 
   return (
-    <div className={`min-h-screen bg-[#120d0b] bg-gradient-to-br ${activeBrandAssets.background} text-white`}>
+    <div className={`min-h-screen bg-[#1a0a0c] bg-gradient-to-br ${activeBrandAssets.background} text-white`}>
       <div className="min-h-screen bg-[linear-gradient(180deg,rgba(10,7,5,0.18),rgba(10,7,5,0.72))]">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <section className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
-                  <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" />
-                  {BRAND_CONFIG[brand].label} Leads
+                <div className="mb-4 flex items-center gap-3">
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="h-8 gap-2 rounded-full border border-white/12 bg-white/8 px-3 text-[11px] font-medium text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                  >
+                    <Link href={`/?brand=${brand}`}>
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      Back
+                    </Link>
+                  </Button>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
+                    <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" />
+                    {BRAND_CONFIG[brand].label} Leads
+                  </div>
                 </div>
-                <h1 className="text-3xl font-semibold tracking-tight">View all leads</h1>
-                <p className="mt-2 max-w-3xl text-sm text-white/68">
+                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">View all leads</h1>
+                <p className="mt-1 sm:mt-2 max-w-3xl text-xs sm:text-sm text-white/68">
                   Search across the configured lead columns and review formatted rows for {BRAND_CONFIG[brand].label}.
                 </p>
                 {workbook.error ? (
@@ -198,8 +210,8 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                         variant="ghost"
                         className={
                           selected
-                            ? "min-w-[104px] rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                            : "min-w-[104px] rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/40 bg-white/24 px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-white shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white/28 hover:text-white"
+                            : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
                       >
@@ -209,23 +221,12 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   })}
                 </div>
 
-                <div className="flex justify-end">
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className="gap-2 rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                  >
-                    <Link href={`/?brand=${brand}`}>
-                      <ArrowLeft className="h-4 w-4" />
-                      Back to dashboard
-                    </Link>
-                  </Button>
-                </div>
+                <div />
               </div>
             </div>
           </section>
 
-          <section className="rounded-[24px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+          <section className="rounded-[24px] border border-white/14 bg-white/10 p-4 sm:p-5 backdrop-blur-2xl">
             <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="flex items-center gap-3">

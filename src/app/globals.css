@@ -80,6 +80,18 @@ select option {
   border-radius: 18px !important;
 }
 
+/* Universal fix for all Recharts focus borders */
+.recharts-wrapper *,
+.recharts-wrapper *:focus,
+.recharts-surface,
+.recharts-surface:focus,
+svg:focus {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);

@@ -298,7 +298,13 @@ async function fetchRawSheets(): Promise<RawSheet[]> {
   );
 }
 
-export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
+/** In-memory TTL cache shared across all requests (30 seconds) */
+const CACHE_TTL_MS = 30_000;
+let _cachedData: WorkbookData | null = null;
+let _cacheTimestamp = 0;
+let _inflightPromise: Promise<WorkbookData> | null = null;
+
+async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
   const spreadsheetId = process.env.SHEET_ID ?? "";
   const defaultTabName = process.env.TAB_NAME ?? "DATA";
 
@@ -333,4 +339,30 @@ export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
       error: message,
     };
   }
+}
+
+export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
+  const now = Date.now();
+
+  // Return cached data if still fresh
+  if (_cachedData && now - _cacheTimestamp < CACHE_TTL_MS) {
+    return _cachedData;
+  }
+
+  // If another request is already fetching, wait for it (dedup concurrent calls)
+  if (_inflightPromise) {
+    return _inflightPromise;
+  }
+
+  _inflightPromise = fetchWorkbookDataInternal().then((data) => {
+    _cachedData = data;
+    _cacheTimestamp = Date.now();
+    _inflightPromise = null;
+    return data;
+  }).catch((error) => {
+    _inflightPromise = null;
+    throw error;
+  });
+
+  return _inflightPromise;
 });
