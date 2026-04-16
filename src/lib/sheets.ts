@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { google } from "googleapis";
 
-import { inferBrand, type ConcreteBrand } from "@/lib/brands";
+import { type ConcreteBrand } from "@/lib/brands";
 
 type RawSheet = {
   id: number;
@@ -48,6 +48,33 @@ export type WorkbookData = {
   error?: string;
 };
 
+export type DigitalLeadImportEntry = {
+  date: string;
+  actual: number;
+  contacted: number;
+  nonContacted: number;
+  interested: number;
+};
+
+export type DigitalLeadImportMeta = {
+  lastImportedDate: string | null;
+  prompt: string;
+};
+
+const DATA_SHEET_TITLE = "DATA";
+const DIGITAL_REPORT_TYPE = "redwing_digital_leads";
+const DIGITAL_DATA_HEADERS = [
+  "Report Type",
+  "Report Brand",
+  "Report Date",
+  "Actual",
+  "Contacted",
+  "Non Contacted",
+  "Interested",
+  "Prompt Used",
+  "Imported At",
+] as const;
+
 function normalizeHeader(value: string) {
   return value
     .trim()
@@ -77,6 +104,15 @@ function normalizeLocation(value: string) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function formatDateInIst(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 function parseDateValue(value: string | undefined) {
   if (!value) return null;
 
@@ -85,7 +121,7 @@ function parseDateValue(value: string | undefined) {
 
   const direct = new Date(trimmed);
   if (!Number.isNaN(direct.getTime())) {
-    return direct.toISOString().slice(0, 10);
+    return formatDateInIst(direct);
   }
 
   const match = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
@@ -101,7 +137,7 @@ function parseDateValue(value: string | undefined) {
     return null;
   }
 
-  return fallback.toISOString().slice(0, 10);
+  return formatDateInIst(fallback);
 }
 
 function getFirstValue(row: Record<string, string>, aliases: string[]) {
@@ -125,6 +161,24 @@ function normalizeBrandValue(value: string): ConcreteBrand | null {
   return null;
 }
 
+function splitMappingValues(value: string) {
+  return value
+    .split(/[,\n|]+/)
+    .map((item) => expandAliases(item).trim())
+    .filter(Boolean);
+}
+
+function addBrandMappingEntry(
+  brandByTab: Map<string, ConcreteBrand>,
+  brand: ConcreteBrand,
+  value: string,
+) {
+  const normalizedValue = normalizeLookupKey(expandAliases(value));
+  if (!normalizedValue) return;
+
+  brandByTab.set(normalizedValue, brand);
+}
+
 function formatColumnLabel(value: string) {
   return value
     .split("_")
@@ -134,7 +188,7 @@ function formatColumnLabel(value: string) {
 }
 
 function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
-  const dataSheet = rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === "DATA");
+  const dataSheet = rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
   const brandByTab = new Map<string, ConcreteBrand>();
   const leadTableColumns: LeadTableColumn[] = [];
   const seenColumns = new Set<string>();
@@ -145,6 +199,15 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
 
   for (const row of dataSheet.rows) {
     const tabName = getFirstValue(row, ["tab", "tab_name", "sheet", "sheet_name", "campaign_tab"]);
+    const tabAliases = getFirstValue(row, [
+      "tab_aliases",
+      "aliases",
+      "alias",
+      "tab_mapping",
+      "tab_match",
+      "mapping",
+      "match_values",
+    ]);
     const brand = normalizeBrandValue(
       getFirstValue(row, ["brand", "brand_name", "brand_alias", "wing", "company"]),
     );
@@ -156,7 +219,11 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
       formatColumnLabel(tableColumnKey);
 
     if (tabName && brand) {
-      brandByTab.set(normalizeLookupKey(expandAliases(tabName)), brand);
+      addBrandMappingEntry(brandByTab, brand, tabName);
+
+      for (const alias of splitMappingValues(tabAliases)) {
+        addBrandMappingEntry(brandByTab, brand, alias);
+      }
     }
 
     if (tableColumnKey && !seenColumns.has(tableColumnKey)) {
@@ -199,7 +266,7 @@ function normalizeRow(
   const brandAlias = expandAliases(getFirstValue(row, ["brand", "brand_alias", "account_name", "account"]));
   const expandedTabName = expandAliases(tabName);
   const mappedBrand = dataSheetConfig.brandByTab.get(normalizeLookupKey(expandedTabName));
-  const brand = mappedBrand ?? inferBrand(campaign, adName, brandAlias, expandedTabName);
+  const brand = mappedBrand ?? normalizeBrandValue(brandAlias);
 
   return {
     id: `${tabName}-${index}`,
@@ -221,7 +288,9 @@ function normalizeRow(
   };
 }
 
-async function getSheetsClient() {
+async function getSheetsClient(
+  scopes: string[] = ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+) {
   const email = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
@@ -234,7 +303,7 @@ async function getSheetsClient() {
       client_email: email,
       private_key: privateKey,
     },
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    scopes,
   });
 
   return google.sheets({ version: "v4", auth });
@@ -311,7 +380,7 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
   try {
     const rawSheets = await fetchRawSheets();
     const dataSheetConfig = extractDataSheetConfig(rawSheets);
-    const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== "DATA");
+    const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
     const tabs = usableSheets.map((sheet) => expandAliases(sheet.title));
     const rows = usableSheets.flatMap((sheet) =>
       sheet.rows
@@ -366,3 +435,179 @@ export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
 
   return _inflightPromise;
 });
+
+function getSpreadsheetId() {
+  const spreadsheetId = process.env.SHEET_ID;
+
+  if (!spreadsheetId) {
+    throw new Error("Missing SHEET_ID.");
+  }
+
+  return spreadsheetId;
+}
+
+function normalizeDigitalMetric(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[,%\s]+/g, "").trim();
+    if (!cleaned) return 0;
+
+    const parsed = Number(cleaned);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
+function normalizeDigitalDate(value: unknown) {
+  if (typeof value !== "string") {
+    throw new Error("Each entry needs a date in YYYY-MM-DD format.");
+  }
+
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new Error(`Invalid date "${trimmed}". Use YYYY-MM-DD.`);
+  }
+
+  return trimmed;
+}
+
+function buildDigitalLeadPrompt(lastImportedDate: string | null) {
+  const scopeLine = lastImportedDate
+    ? `Extract only rows with a date after ${lastImportedDate}. Ignore ${lastImportedDate} and any earlier date.`
+    : "Extract all visible dated rows that contain actual calling numbers.";
+
+  return [
+    "You are extracting data from a Redwing digital leads calling report image.",
+    scopeLine,
+    "Ignore total rows, blank rows, percentage columns, and any row where the numeric counts are missing.",
+    'Return strict JSON only with this exact shape: {"entries":[{"date":"YYYY-MM-DD","actual":0,"contacted":0,"nonContacted":0,"interested":0}]}',
+    "Use the report date column from the image and convert it to YYYY-MM-DD.",
+    "Extract only values that are clearly visible in the image. Do not guess missing numbers.",
+  ].join(" ");
+}
+
+function getDigitalDataSheet(rawSheets: RawSheet[]) {
+  return rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
+}
+
+function getLatestImportedDigitalDate(rawSheets: RawSheet[]) {
+  const dataSheet = getDigitalDataSheet(rawSheets);
+  if (!dataSheet) return null;
+
+  const reportTypeIndex = dataSheet.headers.indexOf(normalizeHeader("Report Type"));
+  const reportDateIndex = dataSheet.headers.indexOf(normalizeHeader("Report Date"));
+
+  if (reportTypeIndex === -1 || reportDateIndex === -1) return null;
+
+  let latestDate: string | null = null;
+
+  for (const row of dataSheet.rows) {
+    if (row[dataSheet.headers[reportTypeIndex]] !== DIGITAL_REPORT_TYPE) continue;
+
+    const reportDate = row[dataSheet.headers[reportDateIndex]]?.trim() ?? "";
+    if (!reportDate) continue;
+    if (!latestDate || reportDate > latestDate) {
+      latestDate = reportDate;
+    }
+  }
+
+  return latestDate;
+}
+
+export async function getDigitalLeadImportMeta(): Promise<DigitalLeadImportMeta> {
+  const rawSheets = await fetchRawSheets();
+  const lastImportedDate = getLatestImportedDigitalDate(rawSheets);
+
+  return {
+    lastImportedDate,
+    prompt: buildDigitalLeadPrompt(lastImportedDate),
+  };
+}
+
+async function ensureDataSheetHeaders() {
+  const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
+  const spreadsheetId = getSpreadsheetId();
+  const range = `${DATA_SHEET_TITLE}!1:1`;
+  const headerResponse = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const existingHeaders = (headerResponse.data.values?.[0] ?? []).map((value) => String(value).trim());
+  const mergedHeaders = [...existingHeaders];
+
+  for (const header of DIGITAL_DATA_HEADERS) {
+    if (!mergedHeaders.includes(header)) {
+      mergedHeaders.push(header);
+    }
+  }
+
+  if (mergedHeaders.length !== existingHeaders.length) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [mergedHeaders],
+      },
+    });
+  }
+
+  return mergedHeaders;
+}
+
+export async function appendDigitalLeadImport(
+  entries: DigitalLeadImportEntry[],
+  promptUsed: string,
+) {
+  if (entries.length === 0) {
+    throw new Error("At least one entry is required.");
+  }
+
+  const headers = await ensureDataSheetHeaders();
+  const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
+  const spreadsheetId = getSpreadsheetId();
+  const importedAt = new Date().toISOString();
+
+  const values = entries.map((entry) =>
+    headers.map((header) => {
+      switch (header) {
+        case "Report Type":
+          return DIGITAL_REPORT_TYPE;
+        case "Report Brand":
+          return "redwing";
+        case "Report Date":
+          return normalizeDigitalDate(entry.date);
+        case "Actual":
+          return normalizeDigitalMetric(entry.actual);
+        case "Contacted":
+          return normalizeDigitalMetric(entry.contacted);
+        case "Non Contacted":
+          return normalizeDigitalMetric(entry.nonContacted);
+        case "Interested":
+          return normalizeDigitalMetric(entry.interested);
+        case "Prompt Used":
+          return promptUsed;
+        case "Imported At":
+          return importedAt;
+        default:
+          return "";
+      }
+    }),
+  );
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${DATA_SHEET_TITLE}!A:ZZ`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values,
+    },
+  });
+
+  _cachedData = null;
+  _cacheTimestamp = 0;
+}

@@ -84,9 +84,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
   }
 
   return (
-    <div className="relative isolate min-h-screen overflow-hidden bg-[#6f2028]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.14),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(255,146,154,0.22),_transparent_34%),linear-gradient(135deg,_rgba(56,10,18,0.84),_rgba(125,28,42,0.5)_52%,_rgba(255,163,170,0.14))]" />
-      <div className="absolute inset-0 backdrop-blur-[12px]" />
+    <div className="relative isolate min-h-dvh overflow-hidden bg-[#0D4D8B] transition-[background-color] duration-500 ease-out">
       <motion.div
         className="absolute -left-10 top-24 h-40 w-40 rounded-full bg-white/10 blur-3xl"
         animate={{ y: [0, 22, 0] }}
@@ -98,7 +96,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
         transition={{ duration: 9, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
       />
 
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-6 py-10">
+      <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-10">
         <motion.div
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
@@ -191,7 +189,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                 exit={{ opacity: 0 }}
                 className="mt-4 text-center text-sm text-white/54"
               >
-                Tap digits, use delete one-by-one, then press enter.
+                Tap digits, then press enter.
               </motion.p>
             )}
           </AnimatePresence>

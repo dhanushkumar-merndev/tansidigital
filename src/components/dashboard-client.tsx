@@ -19,12 +19,17 @@ import {
 import {
   BarChart3,
   ChevronDown,
+  Clipboard,
+  CircleAlert,
+  FileUp,
+  KeyRound,
   Layers3,
   LogOut,
   Search,
   Sparkles,
   Target,
   Users,
+  X,
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -49,6 +54,28 @@ type Summary = {
   tabs: number;
   organicLeads: number;
   platforms: number;
+};
+
+type TimelineDatum = {
+  date: string;
+  label: string;
+  tooltipLabel: string;
+  tooltipHeading: string;
+  leads: number;
+  bigwingLeads: number;
+  redwingLeads: number;
+};
+
+type PlatformDatum = {
+  name: string;
+  value: number;
+  bigwingValue: number;
+  redwingValue: number;
+};
+
+type DigitalLeadImportMeta = {
+  lastImportedDate: string | null;
+  prompt: string;
 };
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
@@ -118,11 +145,168 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
   );
 }
 
+type AdNameSearchInputProps = {
+  id: string;
+  suggestions: string[];
+  onSearchChange: (value: string) => void;
+};
+
+const AdNameSearchInput = React.memo(function AdNameSearchInput({
+  id,
+  suggestions,
+  onSearchChange,
+}: AdNameSearchInputProps) {
+  const [inputValue, setInputValue] = React.useState("");
+  const deferredInputValue = React.useDeferredValue(inputValue);
+  const autocompleteSuggestion = React.useMemo(
+    () => findAutocompleteSuggestion(suggestions, inputValue),
+    [inputValue, suggestions],
+  );
+
+  React.useEffect(() => {
+    onSearchChange(deferredInputValue);
+  }, [deferredInputValue, onSearchChange]);
+
+  function acceptAutocompleteSuggestion() {
+    if (!autocompleteSuggestion) return;
+    setInputValue(autocompleteSuggestion);
+  }
+
+  function acceptAutocompleteWord() {
+    if (!autocompleteSuggestion) return;
+
+    const nextChunk = getAutocompleteWordChunk(autocompleteSuggestion, inputValue);
+    if (!nextChunk) return;
+
+    setInputValue(`${inputValue}${nextChunk}`);
+  }
+
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>Search Ad Name</FieldLabel>
+      <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
+        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-4 left-11 flex items-center overflow-hidden text-md leading-none"
+        >
+          {inputValue ? (
+            <>
+              <span className="whitespace-pre text-white">{inputValue}</span>
+              {autocompleteSuggestion ? (
+                <span className="truncate whitespace-pre text-white/38">
+                  {autocompleteSuggestion.slice(inputValue.length)}
+                </span>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+        <input
+          id={id}
+          name={id}
+          type="text"
+          value={inputValue}
+          onChange={(event) => setInputValue(event.target.value)}
+          onKeyDown={(event) => {
+            const selectionAtEnd =
+              event.currentTarget.selectionStart === event.currentTarget.value.length &&
+              event.currentTarget.selectionEnd === event.currentTarget.value.length;
+
+            if (!autocompleteSuggestion || !selectionAtEnd) return;
+
+            if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowRight") {
+              event.preventDefault();
+              acceptAutocompleteSuggestion();
+              return;
+            }
+
+            if (event.key === " ") {
+              event.preventDefault();
+              acceptAutocompleteWord();
+            }
+          }}
+          placeholder="Type ad name..."
+          autoComplete="off"
+          spellCheck={false}
+          className="relative z-10 h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm leading-none text-transparent caret-white outline-none placeholder:text-white/34"
+        />
+      </div>
+    </Field>
+  );
+});
+
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function renderTooltipRow(label: string, value: number, accentClass = "text-white") {
+  return (
+    <div className="flex items-center justify-between gap-6 text-sm">
+      <span className="text-white/68">{label}</span>
+      <span className={`font-semibold tabular-nums ${accentClass}`}>{formatCompactNumber(value)}</span>
+    </div>
+  );
+}
+
+function TimelineTooltip({
+  active,
+  payload,
+  activeBrand,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: TimelineDatum }>;
+  activeBrand: Brand;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0]?.payload;
+  if (!point) return null;
+
+  return (
+    <div className="min-w-[180px] rounded-[18px] border border-white/12 bg-[#1a120d]/95 px-4 py-3 text-white shadow-[0_20px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+      <div className="border-b border-white/10 pb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/58">
+        {point.tooltipHeading}
+      </div>
+      <div className="pt-2 text-sm font-semibold text-white">{point.tooltipLabel}</div>
+      <div className="mt-3 space-y-2">
+        {activeBrand !== "redwing" ? renderTooltipRow("Bigwing", point.bigwingLeads, "text-white") : null}
+        {activeBrand !== "bigwing" ? renderTooltipRow("Redwing", point.redwingLeads, "text-white") : null}
+        {renderTooltipRow("Total", point.leads, "text-white")}
+      </div>
+    </div>
+  );
+}
+
+function PlatformTooltip({
+  active,
+  payload,
+  activeBrand,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: PlatformDatum }>;
+  activeBrand: Brand;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0]?.payload;
+  if (!point) return null;
+
+  return (
+    <div className="min-w-[180px] rounded-[18px] border border-white/12 bg-[#1a120d]/95 px-4 py-3 text-white shadow-[0_20px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+      <div className="border-b border-white/10 pb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/58">
+        Platform / Source
+      </div>
+      <div className="pt-2 text-sm font-semibold text-white">{point.name}</div>
+      <div className="mt-3 space-y-2">
+        {activeBrand !== "redwing" ? renderTooltipRow("Bigwing", point.bigwingValue, "text-white") : null}
+        {activeBrand !== "bigwing" ? renderTooltipRow("Redwing", point.redwingValue, "text-white") : null}
+        {renderTooltipRow("Total", point.value, "text-white")}
+      </div>
+    </div>
+  );
 }
 
 function findAutocompleteSuggestion(options: string[], query: string) {
@@ -146,6 +330,15 @@ function findAutocompleteSuggestion(options: string[], query: string) {
   );
 }
 
+function getAutocompleteWordChunk(suggestion: string, query: string) {
+  if (!suggestion || suggestion.length <= query.length) return "";
+
+  const remainingSuggestion = suggestion.slice(query.length);
+  const nextWordMatch = remainingSuggestion.match(/^\S+\s*/);
+
+  return nextWordMatch?.[0] ?? remainingSuggestion;
+}
+
 function parseDate(date: string | null) {
   return date ? new Date(`${date}T00:00:00`) : null;
 }
@@ -159,6 +352,15 @@ function getIstDateKey(date: Date) {
   }).format(date);
 }
 
+function getRowIstDate(row: DashboardRow) {
+  const timestamp = getRowTimestamp(row);
+  if (timestamp) {
+    return getIstDateKey(timestamp);
+  }
+
+  return row.date;
+}
+
 function getRowTimestampValue(row: DashboardRow) {
   return (
     row.raw.created_time ||
@@ -169,6 +371,55 @@ function getRowTimestampValue(row: DashboardRow) {
     row.date ||
     ""
   );
+}
+
+function getRowTimestamp(row: DashboardRow) {
+  const rawValue = getRowTimestampValue(row).trim();
+  if (!rawValue) return null;
+
+  const parsed = new Date(rawValue);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return parsed;
+}
+
+function formatHourLabel(hour: number) {
+  const normalizedHour = ((hour % 24) + 24) % 24;
+  const period = normalizedHour >= 12 ? "PM" : "AM";
+  const displayHour = normalizedHour % 12 || 12;
+  return `${displayHour}${period}`;
+}
+
+function formatHourTooltipLabel(hour: number) {
+  const normalizedHour = ((hour % 24) + 24) % 24;
+  const period = normalizedHour >= 12 ? "PM" : "AM";
+  const displayHour = normalizedHour % 12 || 12;
+  return `${displayHour}:00 ${period}`;
+}
+
+function getIstHourKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}`;
+}
+
+function getIstHourNumber(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
+  return Number(hour);
 }
 
 function isRowInIstDate(row: DashboardRow, targetIstDate: string) {
@@ -285,8 +536,16 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const searchParams = useSearchParams();
   const [brand, setBrand] = React.useState<Brand>(initialBrand);
   const [campaignFilter, setCampaignFilter] = React.useState("all");
-  const [searchTerm, setSearchTerm] = React.useState("");
-  const deferredSearch = React.useDeferredValue(searchTerm);
+  const [searchFilter, setSearchFilter] = React.useState("");
+  const normalizedSearchFilter = searchFilter.trim().toLowerCase();
+  const [isDigitalModalOpen, setIsDigitalModalOpen] = React.useState(false);
+  const [digitalPin, setDigitalPin] = React.useState("");
+  const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
+  const [isDigitalLoading, setIsDigitalLoading] = React.useState(false);
+  const [digitalError, setDigitalError] = React.useState("");
+  const [digitalMeta, setDigitalMeta] = React.useState<DigitalLeadImportMeta | null>(null);
+  const [digitalResponseText, setDigitalResponseText] = React.useState("");
+  const [digitalSuccessMessage, setDigitalSuccessMessage] = React.useState("");
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -306,90 +565,200 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     }
   }, [brand]);
 
-  const brandRows = workbook.rows.filter((row) => {
-    if (brand === "all") return true;
-    return row.brand === brand;
-  });
+  React.useEffect(() => {
+    setIsDigitalModalOpen(false);
+    setIsDigitalPinVerified(false);
+    setDigitalPin("");
+    setDigitalError("");
+    setDigitalMeta(null);
+    setDigitalResponseText("");
+    setDigitalSuccessMessage("");
+  }, [brand]);
+
+  const brandRows = React.useMemo(
+    () =>
+      workbook.rows.filter((row) => {
+        if (brand === "all") return true;
+        return row.brand === brand;
+      }),
+    [brand, workbook.rows],
+  );
 
   const todayIst = getIstDateKey(new Date());
 
-  const campaigns = Array.from(new Set(brandRows.map((row) => row.campaign).filter(Boolean))).sort();
+  const campaigns = React.useMemo(
+    () => Array.from(new Set(brandRows.map((row) => row.campaign).filter(Boolean))).sort(),
+    [brandRows],
+  );
 
-  const autocompleteRows = brandRows.filter((row) => {
-    const rowDate = parseDate(row.date);
-    const from = dateRange?.from ? startOfDay(dateRange.from) : null;
-    const to = dateRange?.to ? endOfDay(dateRange.to) : null;
-    const outOfRange =
-      (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
+  const autocompleteRows = React.useMemo(() => {
+    const fromDate = dateRange?.from;
+    const toDate = dateRange?.to;
 
-    if (outOfRange) return false;
-    if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
+    return brandRows.filter((row) => {
+      const rowDate = parseDate(getRowIstDate(row));
+      const from = fromDate ? startOfDay(fromDate) : null;
+      const to = toDate ? endOfDay(toDate) : null;
+      const outOfRange =
+        (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
 
-    return Boolean(row.adName);
-  });
+      if (outOfRange) return false;
+      if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
 
-  const adNameSuggestions = Array.from(
-    new Set(autocompleteRows.map((row) => row.adName.trim()).filter(Boolean)),
-  ).sort((left, right) => left.localeCompare(right));
+      return Boolean(row.adName);
+    });
+  }, [brandRows, campaignFilter, dateRange]);
 
-  const autocompleteSuggestion = findAutocompleteSuggestion(adNameSuggestions, searchTerm);
+  const adNameSuggestions = React.useMemo(
+    () =>
+      Array.from(new Set(autocompleteRows.map((row) => row.adName.trim()).filter(Boolean))).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    [autocompleteRows],
+  );
 
-  const filteredRows = brandRows.filter((row) => {
-    const rowDate = parseDate(row.date);
-    const from = dateRange?.from ? startOfDay(dateRange.from) : null;
-    const to = dateRange?.to ? endOfDay(dateRange.to) : null;
-    const outOfRange =
-      (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
+  const filteredRows = React.useMemo(() => {
+    const fromDate = dateRange?.from;
+    const toDate = dateRange?.to;
 
-    if (outOfRange) return false;
-    if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
-    if (deferredSearch && !row.adName.toLowerCase().includes(deferredSearch.toLowerCase())) {
-      return false;
-    }
+    return brandRows.filter((row) => {
+      const rowDate = parseDate(getRowIstDate(row));
+      const from = fromDate ? startOfDay(fromDate) : null;
+      const to = toDate ? endOfDay(toDate) : null;
+      const outOfRange =
+        (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
 
-    return true;
-  });
+      if (outOfRange) return false;
+      if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
+      if (normalizedSearchFilter && !row.adName.toLowerCase().includes(normalizedSearchFilter)) {
+        return false;
+      }
 
-  const summary = summarizeRows(filteredRows);
+      return true;
+    });
+  }, [brandRows, campaignFilter, dateRange, normalizedSearchFilter]);
 
-  const todayCampaignRows = brandRows.filter((row) => {
-    if (!isRowInIstDate(row, todayIst)) return false;
-    if (deferredSearch && !row.adName.toLowerCase().includes(deferredSearch.toLowerCase())) {
-      return false;
-    }
+  const summary = React.useMemo(() => summarizeRows(filteredRows), [filteredRows]);
 
-    return true;
-  });
+  const todayCampaignRows = React.useMemo(
+    () =>
+      brandRows.filter((row) => {
+        if (!isRowInIstDate(row, todayIst)) return false;
+        if (normalizedSearchFilter && !row.adName.toLowerCase().includes(normalizedSearchFilter)) {
+          return false;
+        }
+
+        return true;
+      }),
+    [brandRows, normalizedSearchFilter, todayIst],
+  );
 
   const todayCampaignData = Array.from(
     todayCampaignRows.reduce<Map<string, number>>((map, row) => {
       const key = row.campaign || "Unknown";
       map.set(key, (map.get(key) ?? 0) + 1);
       return map;
-    }, new Map()),
+    }, new Map<string, number>()),
   )
     .map(([campaign, leads]) => ({ campaign, leads }))
     .sort((a, b) => b.leads - a.leads)
     .slice(0, 2);
 
-  const timelineMap = new Map<string, { date: string; leads: number; uniquePhones: number }>();
-  for (const row of filteredRows) {
-    const key = row.date ?? "Unknown";
-    const bucket = timelineMap.get(key) ?? { date: key, leads: 0, uniquePhones: 0 };
-    bucket.leads += 1;
-    timelineMap.set(key, bucket);
-  }
-  const timelineData = Array.from(timelineMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  const currentRangeFrom = dateRange?.from;
+  const currentRangeTo = dateRange?.to;
+  const isSingleDayRange = !!(
+    currentRangeFrom &&
+    currentRangeTo &&
+    getIstDateKey(currentRangeFrom) === getIstDateKey(currentRangeTo)
+  );
+  const selectedIstDateKey = isSingleDayRange && currentRangeFrom ? getIstDateKey(currentRangeFrom) : null;
+  const todayIstKey = getIstDateKey(new Date());
+  const isTodaySingleDayRange = selectedIstDateKey === todayIstKey;
+
+  const timelineData = React.useMemo(() => {
+    if (isSingleDayRange && selectedIstDateKey) {
+      const timelineMap = new Map<string, TimelineDatum>();
+
+      for (const row of filteredRows) {
+        const timestamp = getRowTimestamp(row);
+        if (!timestamp) continue;
+        if (getIstDateKey(timestamp) !== selectedIstDateKey) continue;
+
+        const key = getIstHourKey(timestamp);
+        const hour = getIstHourNumber(timestamp);
+        const bucket = timelineMap.get(key) ?? {
+          date: key,
+          label: formatHourLabel(hour),
+          tooltipLabel: formatHourTooltipLabel(hour),
+          tooltipHeading: "Time",
+          leads: 0,
+          bigwingLeads: 0,
+          redwingLeads: 0,
+        };
+        bucket.leads += 1;
+        if (row.brand === "bigwing") bucket.bigwingLeads += 1;
+        if (row.brand === "redwing") bucket.redwingLeads += 1;
+        timelineMap.set(key, bucket);
+      }
+
+      const hourLimit = isTodaySingleDayRange ? getIstHourNumber(new Date()) : 23;
+      const buckets = [];
+
+      for (let hour = 0; hour <= hourLimit; hour += 1) {
+        const date = `${selectedIstDateKey} ${String(hour).padStart(2, "0")}`;
+        buckets.push(
+          timelineMap.get(date) ?? {
+            date,
+            label: formatHourLabel(hour),
+            tooltipLabel: formatHourTooltipLabel(hour),
+            tooltipHeading: "Time",
+            leads: 0,
+            bigwingLeads: 0,
+            redwingLeads: 0,
+          },
+        );
+      }
+
+      return buckets;
+    }
+
+    const timelineMap = new Map<string, TimelineDatum>();
+    for (const row of filteredRows) {
+      const key = row.date ?? "Unknown";
+      const bucket = timelineMap.get(key) ?? {
+        date: key,
+        label: key.slice(8, 10),
+        tooltipLabel: key,
+        tooltipHeading: "Date",
+        leads: 0,
+        bigwingLeads: 0,
+        redwingLeads: 0,
+      };
+      bucket.leads += 1;
+      if (row.brand === "bigwing") bucket.bigwingLeads += 1;
+      if (row.brand === "redwing") bucket.redwingLeads += 1;
+      timelineMap.set(key, bucket);
+    }
+
+    return Array.from(timelineMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }, [filteredRows, isSingleDayRange, isTodaySingleDayRange, selectedIstDateKey]);
+
+  const timelineTickInterval = Math.max(0, Math.ceil(timelineData.length / 6) - 1);
 
   const campaignMap = new Map<string, number>();
-  const platformMap = new Map<string, number>();
+  const platformMap = new Map<string, { total: number; bigwing: number; redwing: number }>();
   const locationMap = new Map<string, number>();
   const bigwingResponseMap = new Map<string, number>();
   const redwingLocationMap = new Map<string, number>();
 
   for (const row of filteredRows) {
     campaignMap.set(row.campaign || "Unknown", (campaignMap.get(row.campaign || "Unknown") ?? 0) + 1);
-    platformMap.set(row.platform || "unknown", (platformMap.get(row.platform || "unknown") ?? 0) + 1);
+    const platformKey = row.platform || "unknown";
+    const platformBucket = platformMap.get(platformKey) ?? { total: 0, bigwing: 0, redwing: 0 };
+    platformBucket.total += 1;
+    if (row.brand === "bigwing") platformBucket.bigwing += 1;
+    if (row.brand === "redwing") platformBucket.redwing += 1;
+    platformMap.set(platformKey, platformBucket);
     if (row.location) {
       const label = getLocationLabel(row, brand);
       locationMap.set(label, (locationMap.get(label) ?? 0) + 1);
@@ -407,10 +776,14 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     .sort((a, b) => b.leads - a.leads)
     .slice(0, 8);
 
-  const platformData = Array.from(platformMap.entries()).map(([name, value]) => ({
-    name: name.toUpperCase(),
-    value,
-  }));
+  const platformData = Array.from(platformMap.entries())
+    .map(([name, value]) => ({
+      name: name.toUpperCase(),
+      value: value.total,
+      bigwingValue: value.bigwing,
+      redwingValue: value.redwing,
+    }))
+    .sort((a, b) => b.value - a.value);
 
   const bigwingResponseData = Array.from(bigwingResponseMap.entries())
     .map(([response, leads]) => ({ response, leads }))
@@ -426,11 +799,130 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     redwingLocationData.length * (brand === "redwing" ? 32 : 42),
   );
 
-  const pieColors = ["#f07b80", "#8de0ff", "#f3d0a6", "#c5b3ff", "#8ff0c4"];
+  const chartPrimary = "#ffffff";
+  const chartAccent = "#8de0ff";
+  const chartHoverCursor = "rgba(216, 216, 216, 0.1)";
+  const pieColors = ["#ffffff", "#8de0ff", "#eefbff", "#d8f3ff", "#b9eaff"];
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.refresh();
+  }
+
+  async function handleDigitalPinSubmit() {
+    setIsDigitalLoading(true);
+    setDigitalError("");
+    setDigitalSuccessMessage("");
+
+    try {
+      const response = await fetch("/api/digital-leads/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pin: digitalPin }),
+      });
+
+      const data = (await response.json().catch(() => null)) as
+        | ({ ok: true } & DigitalLeadImportMeta)
+        | { ok: false; error?: string }
+        | null;
+
+      if (!response.ok || !data || data.ok !== true) {
+        setDigitalError(data && "error" in data ? data.error ?? "Wrong digital PIN." : "Wrong digital PIN.");
+        return;
+      }
+
+      setDigitalMeta({
+        lastImportedDate: data.lastImportedDate,
+        prompt: data.prompt,
+      });
+      setIsDigitalPinVerified(true);
+    } finally {
+      setIsDigitalLoading(false);
+    }
+  }
+
+  async function handleCopyDigitalPrompt() {
+    if (!digitalMeta?.prompt) return;
+
+    try {
+      await navigator.clipboard.writeText(digitalMeta.prompt);
+      setDigitalSuccessMessage("Prompt copied. Paste it into ChatGPT with your image.");
+      setDigitalError("");
+    } catch {
+      setDigitalError("Unable to copy prompt right now.");
+    }
+  }
+
+  async function handleDigitalImportSubmit() {
+    setIsDigitalLoading(true);
+    setDigitalError("");
+    setDigitalSuccessMessage("");
+
+    try {
+      const payload = JSON.parse(digitalResponseText) as { entries?: unknown[] };
+
+      const response = await fetch("/api/digital-leads/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pin: digitalPin,
+          promptUsed: digitalMeta?.prompt ?? "",
+          payload,
+        }),
+      });
+
+      const data = (await response.json().catch(() => null)) as
+        | { ok: true; count: number }
+        | { ok: false; error?: string }
+        | null;
+
+      if (!response.ok || !data || data.ok !== true) {
+        setDigitalError(
+          data && "error" in data ? data.error ?? "Unable to import the pasted JSON." : "Unable to import the pasted JSON.",
+        );
+        return;
+      }
+
+      setDigitalSuccessMessage(`${data.count} row${data.count === 1 ? "" : "s"} appended to DATA.`);
+      setDigitalResponseText("");
+      const refreshedMeta = await fetch("/api/digital-leads/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pin: digitalPin }),
+      });
+      const refreshedData = (await refreshedMeta.json().catch(() => null)) as
+        | ({ ok: true } & DigitalLeadImportMeta)
+        | null;
+
+      if (refreshedMeta.ok && refreshedData?.ok) {
+        setDigitalMeta({
+          lastImportedDate: refreshedData.lastImportedDate,
+          prompt: refreshedData.prompt,
+        });
+      }
+    } catch {
+      setDigitalError("Paste valid JSON from ChatGPT before importing.");
+    } finally {
+      setIsDigitalLoading(false);
+    }
+  }
+
+  function openDigitalModal() {
+    setIsDigitalModalOpen(true);
+    setDigitalError("");
+    setDigitalSuccessMessage("");
+  }
+
+  function closeDigitalModal() {
+    setIsDigitalModalOpen(false);
+    setDigitalError("");
+    setDigitalSuccessMessage("");
   }
 
   function handleBrandChange(nextBrand: Brand) {
@@ -442,25 +934,25 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     });
   }
 
-  function acceptAutocompleteSuggestion() {
-    if (!autocompleteSuggestion) return;
-    setSearchTerm(autocompleteSuggestion);
-  }
-
   const activeBrandAssets = getBrandAssets(brand);
+  const leadsPageHref = `/leads?brand=${brand === "all" ? "bigwing" : brand}`;
+  const dashboardBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
 
   return (
-    <div className={`min-h-screen bg-[#1a0a0c] bg-gradient-to-br ${activeBrandAssets.background} text-white`}>
-      <div className="min-h-screen bg-[linear-gradient(180deg,rgba(10,7,5,0.18),rgba(10,7,5,0.72))]">
+    <div
+      className="min-h-screen text-white transition-[background-color] duration-500 ease-out"
+      style={{ backgroundColor: dashboardBackground }}
+    >
+      <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+          <section className="rounded-[24px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
                   <Sparkles className="h-3.5 w-3.5" />
                   {brand === "all" ? "Combined Dashboard" : `${activeBrandAssets.label} Dashboard`}
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Campaign analytics command center</h1>
+                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Campaign analytics</h1>
                 <p className="mt-1 sm:mt-2 max-w-3xl text-xs sm:text-sm text-white/68">
                   Auto-detected {workbook.tabs.length} campaign tabs from Google Sheets with lead analytics by campaign,
                   ad name, platform, location, and lead status.
@@ -484,7 +976,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         variant="ghost"
                         className={
                           selected
-                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/40 bg-white/24 px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-white shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white/28 hover:text-white"
+                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
                             : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
@@ -496,20 +988,33 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                 </div>
 
                 <div className="flex justify-end">
-                  <Button
-                    variant="ghost"
-                    className="gap-2 rounded-full border border-white/12 bg-white/8 px-4 sm:px-5 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                    onClick={handleLogout}
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Logout
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {brand === "redwing" ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                        onClick={openDigitalModal}
+                        aria-label="Open digital leads importer"
+                      >
+                        <FileUp className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      className="gap-2 rounded-full border border-white/12 bg-white/8 px-4 sm:px-5 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                      onClick={handleLogout}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
           </section>
 
-          <section className="grid gap-4 rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
+          <section className="grid gap-4 rounded-[24px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
             <DateRangePicker date={dateRange} onSelect={setDateRange} />
 
             <FilterSelect
@@ -521,50 +1026,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               options={[{ value: "all", label: "All campaigns" }, ...campaigns.map((campaign) => ({ value: campaign, label: campaign }))]}
             />
 
-            <Field>
-              <FieldLabel htmlFor="ad-search">Search Ad Name</FieldLabel>
-              <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
-                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 right-4 left-11 flex items-center overflow-hidden text-md leading-none"
-                >
-                  {searchTerm ? (
-                    <>
-                      <span className="whitespace-pre text-white">{searchTerm}</span>
-                      {autocompleteSuggestion ? (
-                        <span className="truncate whitespace-pre text-white/38">
-                          {autocompleteSuggestion.slice(searchTerm.length)}
-                        </span>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-                <input
-                  id="ad-search"
-                  name="ad-search"
-                  type="text"
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  onKeyDown={(event) => {
-                    const selectionAtEnd =
-                      event.currentTarget.selectionStart === event.currentTarget.value.length &&
-                      event.currentTarget.selectionEnd === event.currentTarget.value.length;
-
-                    if (!autocompleteSuggestion || !selectionAtEnd) return;
-
-                    if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowRight") {
-                      event.preventDefault();
-                      acceptAutocompleteSuggestion();
-                    }
-                  }}
-                  placeholder="Type ad name..."
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="relative z-10 h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm leading-none text-transparent caret-white outline-none placeholder:text-white/34"
-                />
-              </div>
-            </Field>
+            <AdNameSearchInput id="ad-search" suggestions={adNameSuggestions} onSearchChange={setSearchFilter} />
           </section>
 
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -574,7 +1036,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               { label: "Campaigns", value: formatCompactNumber(summary.campaigns), hint: `${summary.tabs} active tabs`, icon: Layers3 },
               { label: "Platforms", value: formatCompactNumber(summary.platforms), hint: `${summary.organicLeads} organic leads`, icon: BarChart3 },
             ].map((card) => (
-              <div key={card.label} className="rounded-[24px] border border-white/14 bg-white/10 p-3.5 sm:p-5 shadow-[0_20px_80px_rgba(5,5,5,0.18)] backdrop-blur-xl transition-all">
+              <div key={card.label} className="rounded-[24px] border border-white/14 bg-white/10 p-3.5 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
                 <div className="mb-2 sm:mb-6 flex items-center justify-between">
                   <span className="text-[11px] sm:text-sm text-white/62 uppercase tracking-tight">{card.label}</span>
                   <div className="flex h-7 w-7 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-2xl border border-white/12 bg-white/10">
@@ -588,28 +1050,88 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
           </section>
 
           <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-            <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold">Lead timeline</h2>
-                <p className="mt-1 text-sm text-white/58">Daily lead volume from `created_time`.</p>
+            <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Lead timeline</h2>
+                  <p className="mt-1 text-sm text-white/58">
+                    {isSingleDayRange ? "Hourly lead volume from `created_time`." : "Daily lead volume from `created_time`."}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Timeline instructions"
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-white/12 bg-white/8 text-white/76 transition hover:bg-white/12 hover:text-white"
+                      >
+                        <CircleAlert className="h-4 w-4" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="end"
+                      className="w-[320px] rounded-[22px] border border-white/14 bg-[#C52F33] p-4 text-white shadow-[0_20px_60px_rgba(15,5,7,0.32)] ring-0 backdrop-blur-xl"
+                    >
+                      <div className="space-y-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-white">How timeline counts work</h3>
+                          <p className="mt-1 text-xs leading-5 text-white/68">
+                            All dates and times are converted to IST first, then grouped into the selected bucket.
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">Date Range</p>
+                          <p className="mt-1 text-xs leading-5 text-white/76">
+                            If you select <span className="font-semibold text-white">15 Apr - 16 Apr</span>, the chart counts leads from
+                            <span className="font-semibold text-white"> 15 Apr 12:00 AM IST</span> to
+                            <span className="font-semibold text-white"> 16 Apr 11:59 PM IST</span>.
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">Time Bucket</p>
+                          <p className="mt-1 text-xs leading-5 text-white/76">
+                            A point at <span className="font-semibold text-white">5:00 PM</span> means all leads from
+                            <span className="font-semibold text-white"> 5:00:00 PM</span> to
+                            <span className="font-semibold text-white"> 5:59:59 PM IST</span>. It does not include anything after
+                            <span className="font-semibold text-white"> 6:00 PM</span>.
+                          </p>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  <Button
+                    variant="ghost"
+                    className="shrink-0 rounded-full border border-white/12 bg-white/8 px-4 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                    onClick={() => router.push(leadsPageHref)}
+                  >
+                    Open leads
+                  </Button>
+                </div>
               </div>
                 <div className="h-[320px] min-w-0">
                   {isMounted ? (
                     <ResponsiveContainer id="timeline-chart" width="100%" height={320} minWidth={0} minHeight={0}>
                       <LineChart data={timelineData}>
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                        <XAxis dataKey="date" stroke="rgba(255,255,255,0.5)" tickFormatter={(value) => value.slice(5)} />
+                        <XAxis
+                          dataKey="date"
+                          stroke="rgba(255,255,255,0.5)"
+                          interval={timelineTickInterval}
+                          minTickGap={24}
+                          tickFormatter={(value) => timelineData.find((d) => d.date === value)?.label ?? ""}
+                        />
                         <YAxis stroke="rgba(255,255,255,0.5)" />
-                        <Tooltip contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }} />
+                        <Tooltip content={<TimelineTooltip activeBrand={brand} />} />
                         <Legend />
-                        <Line type="monotone" dataKey="leads" stroke="#ff9ca3" strokeWidth={3} dot={false} />
+                        <Line type="monotone" dataKey="leads" stroke={chartPrimary} strokeWidth={3} dot={false} />
                       </LineChart>
                     </ResponsiveContainer>
                   ) : null}
                 </div>
             </div>
 
-            <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+            <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
               <div className="mb-6">
                 <h2 className="text-xl font-semibold">Platform mix</h2>
                 <p className="mt-1 text-sm text-white/58">Lead split by platform values from your sheet.</p>
@@ -632,7 +1154,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                             <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }} />
+                        <Tooltip content={<PlatformTooltip activeBrand={brand} />} />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>
@@ -643,7 +1165,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
           <section className="grid items-start gap-4 xl:grid-cols-[1.15fr_1fr]">
             <div className="grid gap-4">
-              <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+              <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                 <div className="mb-6">
                   <h2 className="text-xl font-semibold">Top campaigns</h2>
                   <p className="mt-1 text-sm text-white/58">Lead count by campaign name.</p>
@@ -655,9 +1177,12 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                         <XAxis dataKey="campaign" stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
                         <YAxis stroke="rgba(255,255,255,0.5)" />
-                        <Tooltip contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }}
+                          cursor={{ fill: chartHoverCursor }}
+                        />
                         <Legend />
-                        <Bar dataKey="leads" fill={activeBrandAssets.accent} radius={[12, 12, 0, 0]} activeBar={{ stroke: "none" }} />
+                        <Bar dataKey="leads" fill={chartPrimary} radius={[12, 12, 0, 0]} activeBar={{ stroke: "none" }} />
                       </BarChart>
                     </ResponsiveContainer>
                   ) : null}
@@ -665,7 +1190,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               </div>
 
               {brand === "all" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-8">
                     <h2 className="text-xl font-semibold">Today Campaign Leads</h2>
                     <p className="mt-1 text-sm text-white/58">
@@ -698,7 +1223,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
             <div className="grid gap-4">
               {brand !== "redwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-6">
                     <h2 className="text-xl font-semibold">Bigwing Yes / No</h2>
                     <p className="mt-1 text-sm text-white/58">Response count from the Bigwing whitefield / hoodi question.</p>
@@ -707,12 +1232,19 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     {bigwingResponseData.length > 0 ? (
                       isMounted ? (
                         <ResponsiveContainer id="bigwing-chart" width="100%" height={160} minWidth={0} minHeight={0}>
-                          <BarChart data={bigwingResponseData} layout="vertical" margin={{ left: 0, right: 0 }}>
+                          <BarChart
+                            data={bigwingResponseData}
+                            layout="vertical"
+                            margin={{ left: 0, right: 0 }}
+                          >
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
                             <YAxis dataKey="response" type="category" width={36} stroke="rgba(255,255,255,0.5)" interval={0} />
-                            <Tooltip contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }} />
-                            <Bar dataKey="leads" fill={activeBrandAssets.accent} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }}
+                              cursor={{ fill: chartHoverCursor }}
+                            />
+                            <Bar dataKey="leads" fill={chartPrimary} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
                           </BarChart>
                         </ResponsiveContainer>
                       ) : null
@@ -726,7 +1258,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "bigwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-5">
                     <h2 className="text-xl font-semibold">Redwing Locations</h2>
                     <p className="mt-1 text-sm text-white/58">Top Redwing location values from the filtered rows.</p>
@@ -743,8 +1275,11 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
                             <YAxis dataKey="location" type="category" width={120} stroke="rgba(255,255,255,0.5)" interval={0} />
-                            <Tooltip contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }} />
-                            <Bar dataKey="leads" fill="#f07b80" radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
+                            <Tooltip
+                              contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }}
+                              cursor={{ fill: chartHoverCursor }}
+                            />
+                            <Bar dataKey="leads" fill={chartAccent} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
                           </BarChart>
                         </ResponsiveContainer>
                       ) : null
@@ -758,7 +1293,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "all" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-6">
                     <h2 className="text-xl font-semibold">View all leads</h2>
                     <p className="mt-1 text-sm text-white/58">
@@ -774,8 +1309,170 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   </Button>
                 </div>
               ) : null}
+
+              {brand === "redwing" ? (
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                  <div className="mb-6">
+                    <h2 className="text-xl font-semibold">Digital Leads Import</h2>
+                    <p className="mt-1 text-sm text-white/58">
+                      Generate the extraction prompt, paste the ChatGPT JSON, and append the result into `DATA`.
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white/72">
+                      Last imported date:{" "}
+                      <span className="font-semibold text-white">
+                        {digitalMeta?.lastImportedDate ?? "No imported rows yet"}
+                      </span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      className="w-full rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                      onClick={openDigitalModal}
+                    >
+                      Open importer
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
+
+          {isDigitalModalOpen ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-sm">
+              <div className="w-full max-w-2xl rounded-[30px] border border-white/14 bg-[#103a64] p-5 shadow-[0_40px_120px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
+                      <FileUp className="h-3.5 w-3.5" />
+                      Redwing Digital Import
+                    </div>
+                    <h2 className="mt-3 text-2xl font-semibold">
+                      {isDigitalPinVerified ? "Paste ChatGPT JSON" : "Enter Digital PIN"}
+                    </h2>
+                    <p className="mt-1 text-sm text-white/68">
+                      {isDigitalPinVerified
+                        ? "Copy the prompt, use it with your report image in ChatGPT, then paste the JSON response here."
+                        : "Use DIGITAL_PIN to unlock the importer before appending anything into DATA."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeDigitalModal}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/12 bg-white/8 text-white/82 transition hover:bg-white/12 hover:text-white"
+                    aria-label="Close digital import modal"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {!isDigitalPinVerified ? (
+                  <div className="space-y-4">
+                    <Field>
+                      <FieldLabel htmlFor="digital-pin">Digital PIN</FieldLabel>
+                      <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
+                        <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
+                        <input
+                          id="digital-pin"
+                          type="password"
+                          value={digitalPin}
+                          onChange={(event) => setDigitalPin(event.target.value)}
+                          placeholder="Enter DIGITAL_PIN"
+                          className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm text-white outline-none placeholder:text-white/34"
+                        />
+                      </div>
+                    </Field>
+                    <div className="flex justify-end gap-3">
+                      <Button
+                        variant="ghost"
+                        className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                        onClick={closeDigitalModal}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="rounded-full border border-white/70 bg-white px-5 py-1 font-medium text-[#103a64] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#103a64]"
+                        onClick={handleDigitalPinSubmit}
+                        disabled={isDigitalLoading || digitalPin.trim().length === 0}
+                      >
+                        {isDigitalLoading ? "Checking..." : "Unlock importer"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-[24px] border border-white/12 bg-white/8 p-4">
+                      <div className="mb-3 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.22em] text-white/52">Prompt</p>
+                          <p className="mt-1 text-sm text-white/68">
+                            Last imported date:{" "}
+                            <span className="font-semibold text-white">
+                              {digitalMeta?.lastImportedDate ?? "No imported rows yet"}
+                            </span>
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          className="shrink-0 rounded-full border border-white/12 bg-white/8 px-4 py-1 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                          onClick={handleCopyDigitalPrompt}
+                        >
+                          <Clipboard className="h-4 w-4" />
+                          Copy prompt
+                        </Button>
+                      </div>
+                      <textarea
+                        readOnly
+                        value={digitalMeta?.prompt ?? ""}
+                        className="min-h-[132px] w-full resize-none rounded-[20px] border border-white/12 bg-[#0a2744]/70 px-4 py-3 text-sm leading-6 text-white/88 outline-none"
+                      />
+                    </div>
+
+                    <Field>
+                      <FieldLabel htmlFor="digital-json">Paste ChatGPT JSON</FieldLabel>
+                      <textarea
+                        id="digital-json"
+                        value={digitalResponseText}
+                        onChange={(event) => setDigitalResponseText(event.target.value)}
+                        placeholder='{"entries":[{"date":"2026-04-16","actual":72,"contacted":45,"nonContacted":27,"interested":17}]}'
+                        className="min-h-[220px] w-full resize-y rounded-[24px] border border-white/16 bg-white/10 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/34"
+                      />
+                    </Field>
+
+                    <div className="flex justify-end gap-3">
+                      <Button
+                        variant="ghost"
+                        className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                        onClick={closeDigitalModal}
+                      >
+                        Close
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="rounded-full border border-white/70 bg-white px-5 py-1 font-medium text-[#103a64] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#103a64]"
+                        onClick={handleDigitalImportSubmit}
+                        disabled={isDigitalLoading || digitalResponseText.trim().length === 0}
+                      >
+                        {isDigitalLoading ? "Appending..." : "Append to DATA"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {digitalError ? (
+                  <p className="mt-4 rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
+                    {digitalError}
+                  </p>
+                ) : null}
+                {digitalSuccessMessage ? (
+                  <p className="mt-4 rounded-2xl border border-white/12 bg-white/8 px-4 py-3 text-sm text-white/82">
+                    {digitalSuccessMessage}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
         </div>
       </div>

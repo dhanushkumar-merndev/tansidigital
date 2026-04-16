@@ -118,8 +118,16 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const campaignScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const suppressChipClickRef = React.useRef(false);
+  const dragStateRef = React.useRef<{
+    pointerId: number;
+    startX: number;
+    startScrollLeft: number;
+    moved: boolean;
+  } | null>(null);
   const [brand, setBrand] = React.useState<ConcreteBrand>(initialBrand);
-  const [campaignFilter, setCampaignFilter] = React.useState("all");
+  const [selectedCampaigns, setSelectedCampaigns] = React.useState<string[]>([]);
   const [searchTerm, setSearchTerm] = React.useState("");
   const deferredSearch = React.useDeferredValue(searchTerm);
   const columns = FIXED_COLUMNS;
@@ -133,7 +141,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   }, [brand]);
 
   React.useEffect(() => {
-    setCampaignFilter("all");
+    setSelectedCampaigns([]);
   }, [brand]);
 
   const brandRows = workbook.rows.filter((row) => row.brand === brand);
@@ -141,8 +149,8 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
 
   const rows = brandRows
     .filter((row) => {
-      if (campaignFilter === "all") return true;
-      return row.campaign === campaignFilter;
+      if (selectedCampaigns.length === 0) return true;
+      return selectedCampaigns.includes(row.campaign);
     })
     .filter((row) => {
       if (!deferredSearch) return true;
@@ -154,8 +162,6 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
       return left.localeCompare(right);
     });
 
-  const activeBrandAssets = getBrandAssets(brand);
-
   function handleBrandChange(nextBrand: ConcreteBrand) {
     setBrand(nextBrand);
     const nextSearch = new URLSearchParams(searchParams.toString());
@@ -165,42 +171,93 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
     });
   }
 
+  function toggleCampaign(campaign: string) {
+    setSelectedCampaigns((current) =>
+      current.includes(campaign) ? current.filter((item) => item !== campaign) : [...current, campaign],
+    );
+  }
+
+  function handleCampaignWheel(event: React.WheelEvent<HTMLDivElement>) {
+    const container = campaignScrollRef.current;
+    if (!container) return;
+
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+
+    container.scrollLeft += delta;
+    event.preventDefault();
+  }
+
+  function handleCampaignPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    const container = campaignScrollRef.current;
+    if (!container) return;
+
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScrollLeft: container.scrollLeft,
+      moved: false,
+    };
+  }
+
+  function handleCampaignPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const container = campaignScrollRef.current;
+    const dragState = dragStateRef.current;
+    if (!container || !dragState || dragState.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - dragState.startX;
+    if (!dragState.moved && Math.abs(deltaX) < 6) return;
+
+    dragState.moved = true;
+    container.scrollLeft = dragState.startScrollLeft - deltaX;
+  }
+
+  function handleCampaignPointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    suppressChipClickRef.current = dragState.moved;
+    dragStateRef.current = null;
+  }
+
+  function handleCampaignClickCapture(event: React.MouseEvent<HTMLDivElement>) {
+    if (!suppressChipClickRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    suppressChipClickRef.current = false;
+  }
+
   return (
-    <div className={`min-h-screen bg-[#1a0a0c] bg-gradient-to-br ${activeBrandAssets.background} text-white`}>
-      <div className="min-h-screen bg-[linear-gradient(180deg,rgba(10,7,5,0.18),rgba(10,7,5,0.72))]">
+    <div className="min-h-screen bg-[#0D4D8B] text-white transition-[background-color] duration-500 ease-out">
+      <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
           <section className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <div className="mb-4 flex items-center gap-3">
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className="h-8 gap-2 rounded-full border border-white/12 bg-white/8 px-3 text-[11px] font-medium text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                  >
-                    <Link href={`/?brand=${brand}`}>
-                      <ArrowLeft className="h-3.5 w-3.5" />
-                      Back
-                    </Link>
-                  </Button>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
-                    <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" />
-                    {BRAND_CONFIG[brand].label} Leads
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="mb-4 flex items-center gap-3">
+                    <Button
+                      asChild
+                      variant="ghost"
+                      className="h-8 gap-2 rounded-full border border-white/12 bg-white/8 px-3 text-[11px] font-medium text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                    >
+                      <Link href={`/?brand=${brand}`}>
+                        <ArrowLeft className="h-3.5 w-3.5" />
+                        Back
+                      </Link>
+                    </Button>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
+                      <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" />
+                      {BRAND_CONFIG[brand].label} Leads {rows.length}
+                    </div>
                   </div>
+                  {workbook.error ? (
+                    <p className="rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
+                      {workbook.error}
+                    </p>
+                  ) : null}
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">View all leads</h1>
-                <p className="mt-1 sm:mt-2 max-w-3xl text-xs sm:text-sm text-white/68">
-                  Search across the configured lead columns and review formatted rows for {BRAND_CONFIG[brand].label}.
-                </p>
-                {workbook.error ? (
-                  <p className="mt-3 rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
-                    {workbook.error}
-                  </p>
-                ) : null}
-              </div>
 
-              <div className="flex flex-col gap-3 lg:min-h-[132px] lg:items-end lg:justify-between">
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                   {leadBrandOptions.map((option) => {
                     const selected = option === brand;
 
@@ -210,7 +267,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                         variant="ghost"
                         className={
                           selected
-                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/40 bg-white/24 px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-white shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white/28 hover:text-white"
+                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
                             : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
@@ -220,59 +277,62 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                     );
                   })}
                 </div>
-
-                <div />
               </div>
-            </div>
-          </section>
-
-          <section className="rounded-[24px] border border-white/14 bg-white/10 p-4 sm:p-5 backdrop-blur-2xl">
-            <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h2 className="text-3xl font-semibold">Lead table</h2>
-                  <span className="rounded-full border border-white/16 bg-white/10 px-3 py-0.5 text-sm font-medium tabular-nums text-white/78">
-                    {rows.length} lead{rows.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-white/58">
-                  {campaignFilter === "all" ? "Showing all campaigns" : `Filtered by: ${campaignFilter}`}
-                </p>
-              </div>
-
-              <div className="w-full max-w-xl">
-                <Field>
-                  <FieldLabel htmlFor="lead-search">Search Leads</FieldLabel>
-                  <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
-                    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
-                    <input
-                      id="lead-search"
-                      value={searchTerm}
-                      onChange={(event) => setSearchTerm(event.target.value)}
-                      placeholder="Search name, phone, campaign, ad, location..."
-                      autoComplete="off"
-                      className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm text-white outline-none placeholder:text-white/34"
-                    />
+           
+              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-3xl font-semibold">Lead table</h2>
                   </div>
-                </Field>
-              </div>
-            </div>
+                  <p className="mt-0.5 text-sm text-white/58">
+                    {selectedCampaigns.length === 0
+                      ? "Showing all campaigns"
+                      : `Filtered by: ${selectedCampaigns.join(", ")}`}
+                  </p>
+                </div>
 
-            <div className="mb-5 overflow-x-auto [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34">
+                <div className="w-full max-w-xl">
+                  <Field>
+                    <FieldLabel htmlFor="lead-search">Search Leads</FieldLabel>
+                    <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
+                      <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
+                      <input
+                        id="lead-search"
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        placeholder="Search name, phone, campaign, ad, location..."
+                        autoComplete="off"
+                        className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm text-white outline-none placeholder:text-white/34"
+                      />
+                    </div>
+                  </Field>
+                </div>
+              </div>
+
+            <div
+              ref={campaignScrollRef}
+              className="mb-3 cursor-grab overflow-x-auto pb-1 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+              onClickCapture={handleCampaignClickCapture}
+              onPointerDown={handleCampaignPointerDown}
+              onPointerMove={handleCampaignPointerMove}
+              onPointerUp={handleCampaignPointerEnd}
+              onPointerCancel={handleCampaignPointerEnd}
+              onWheel={handleCampaignWheel}
+            >
               <div className="flex w-max min-w-full gap-2 pb-2">
                 <Button
                   variant="ghost"
                   className={
-                    campaignFilter === "all"
-                      ? "shrink-0 rounded-full border border-white/22 bg-white/18 px-4 py-1 text-white shadow-none backdrop-blur-xl hover:bg-white/18 hover:text-white"
-                      : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-1 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
+                    selectedCampaigns.length === 0
+                      ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
+                      : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                   }
-                  onClick={() => setCampaignFilter("all")}
+                  onClick={() => setSelectedCampaigns([])}
                 >
                   All campaigns
                 </Button>
                 {campaignOptions.map((campaign) => {
-                  const selected = campaignFilter === campaign;
+                  const selected = selectedCampaigns.includes(campaign);
 
                   return (
                     <Button
@@ -280,10 +340,10 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                       variant="ghost"
                       className={
                         selected
-                          ? "shrink-0 rounded-full border border-white/22 bg-white/18 px-4 py-1 text-white shadow-none backdrop-blur-xl hover:bg-white/18 hover:text-white"
-                          : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-1 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
+                          ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
+                          : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                       }
-                      onClick={() => setCampaignFilter(campaign)}
+                      onClick={() => toggleCampaign(campaign)}
                     >
                       {campaign}
                     </Button>
@@ -351,6 +411,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   </tbody>
                 </table>
               </div>
+            </div>
             </div>
           </section>
         </div>

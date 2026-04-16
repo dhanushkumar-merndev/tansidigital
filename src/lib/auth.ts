@@ -7,6 +7,10 @@ function getDashboardPassword() {
   return process.env.DASHBOARD_PASSWORD ?? "";
 }
 
+function getDigitalPin() {
+  return process.env.DIGITAL_PIN ?? "";
+}
+
 function getAuthSalt() {
   return process.env.AUTH_SALT ?? "dashboard-fallback-salt";
 }
@@ -23,6 +27,17 @@ export function createSessionToken() {
 
 export function verifyPin(pin: string) {
   const expected = toBuffer(getDashboardPassword());
+  const candidate = toBuffer(pin);
+
+  if (expected.length !== candidate.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expected, candidate);
+}
+
+export function verifyDigitalPin(pin: string) {
+  const expected = toBuffer(getDigitalPin());
   const candidate = toBuffer(pin);
 
   if (expected.length !== candidate.length) {
