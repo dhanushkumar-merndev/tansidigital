@@ -883,7 +883,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     setDigitalSuccessMessage("");
 
     try {
-      const response = await fetch("/api/digital-leads/session", {
+      const response = await fetch("/api/digital/session", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -897,6 +897,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
         | null;
 
       if (!response.ok || !data || data.ok !== true) {
+        if (response.status === 404) {
+          setDigitalError("Importer API not found. Please restart the server.");
+          return;
+        }
         setDigitalError(data && "error" in data ? data.error ?? "Wrong digital PIN." : "Wrong digital PIN.");
         return;
       }
@@ -929,9 +933,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     setDigitalSuccessMessage("");
 
     try {
-      const payload = JSON.parse(digitalResponseText) as { entries?: unknown[] };
+      const parsed = JSON.parse(digitalResponseText) as { entries?: unknown[] };
 
-      const response = await fetch("/api/digital-leads/import", {
+      const response = await fetch("/api/digital/import", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -939,7 +943,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
         body: JSON.stringify({
           pin: digitalPin,
           promptUsed: digitalMeta?.prompt ?? "",
-          payload,
+          payload: parsed,
         }),
       });
 
