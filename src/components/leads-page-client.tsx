@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowLeft, ChevronDown, Search } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowLeft, ArrowUpNarrowWide, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
+import { useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -115,6 +116,7 @@ function getSearchableText(row: DashboardRow, columns: LeadTableColumn[]) {
 }
 
 export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps) {
+  const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -130,6 +132,9 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const [selectedCampaigns, setSelectedCampaigns] = React.useState<string[]>([]);
   const [searchTerm, setSearchTerm] = React.useState("");
   const deferredSearch = React.useDeferredValue(searchTerm);
+  const [sortDirection, setSortDirection] = React.useState<"desc" | "asc">("desc");
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const rowsPerPage = 50;
   const columns = FIXED_COLUMNS;
 
   const updateMetadata = React.useEffectEvent((nextBrand: ConcreteBrand) => {
@@ -157,16 +162,30 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
       return getSearchableText(row, columns).includes(deferredSearch.toLowerCase());
     })
     .sort((a, b) => {
-      const left = b.date ?? "";
-      const right = a.date ?? "";
-      return left.localeCompare(right);
+      const dateCompare = (a.date ?? "").localeCompare(b.date ?? "");
+      if (dateCompare !== 0) {
+        return sortDirection === "asc" ? dateCompare : -dateCompare;
+      }
+      // tie breaker for same dates
+      return sortDirection === "asc"
+        ? a.id.localeCompare(b.id, undefined, { numeric: true })
+        : b.id.localeCompare(a.id, undefined, { numeric: true });
     });
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / rowsPerPage));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedRows = rows.slice((safeCurrentPage - 1) * rowsPerPage, safeCurrentPage * rowsPerPage);
+
+  // Reset page when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [brand, selectedCampaigns, deferredSearch, sortDirection]);
+
   function handleBrandChange(nextBrand: ConcreteBrand) {
-    setBrand(nextBrand);
-    const nextSearch = new URLSearchParams(searchParams.toString());
-    nextSearch.set("brand", nextBrand);
-    React.startTransition(() => {
+    startTransition(() => {
+      setBrand(nextBrand);
+      const nextSearch = new URLSearchParams(searchParams.toString());
+      nextSearch.set("brand", nextBrand);
       router.replace(`${pathname}?${nextSearch.toString()}`, { scroll: false });
     });
   }
@@ -226,8 +245,12 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
     suppressChipClickRef.current = false;
   }
 
+  const leadsBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
+  const tableContainerBg = brand === "bigwing" ? "bg-[#111111]/60" : "bg-[#0a2744]/50";
+  const tableHeadBg = brand === "bigwing" ? "bg-[#1a1a1a]/92" : "bg-[#143d66]/92";
+
   return (
-    <div className="min-h-screen bg-[#0D4D8B] text-white transition-[background-color] duration-500 ease-out">
+    <div className="min-h-screen text-white transition-[background-color] duration-500 ease-out" style={{ backgroundColor: leadsBackground }}>
       <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
           <section className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
@@ -239,10 +262,15 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                       asChild
                       variant="ghost"
                       className="h-8 gap-2 rounded-full border border-white/12 bg-white/8 px-3 text-[11px] font-medium text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        startTransition(() => router.push(`/?brand=${brand}`));
+                      }}
+                      disabled={isPending}
                     >
                       <Link href={`/?brand=${brand}`}>
                         <ArrowLeft className="h-3.5 w-3.5" />
-                        Back
+                        {isPending ? "Loading..." : "Back"}
                       </Link>
                     </Button>
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
@@ -267,7 +295,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                         variant="ghost"
                         className={
                           selected
-                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
+                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                             : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
@@ -293,17 +321,51 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
 
                 <div className="w-full max-w-xl">
                   <Field>
-                    <FieldLabel htmlFor="lead-search">Search Leads</FieldLabel>
-                    <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
-                      <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
-                      <input
-                        id="lead-search"
-                        value={searchTerm}
-                        onChange={(event) => setSearchTerm(event.target.value)}
-                        placeholder="Search name, phone, campaign, ad, location..."
-                        autoComplete="off"
-                        className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm text-white outline-none placeholder:text-white/34"
-                      />
+                    <FieldLabel htmlFor="lead-search">Search Leads & Filter</FieldLabel>
+                    <div className="flex items-center gap-2">
+                      <div className="relative h-[48px] flex-1 rounded-[22px] border border-white/16 bg-white/10">
+                        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
+                        <input
+                          id="lead-search"
+                          value={searchTerm}
+                          onChange={(event) => setSearchTerm(event.target.value)}
+                          placeholder="Search name, phone, campaign, ad, location..."
+                          autoComplete="off"
+                          className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-10 text-sm text-white outline-none placeholder:text-white/34"
+                        />
+                        {searchTerm ? (
+                          <button
+                            type="button"
+                            onClick={() => setSearchTerm("")}
+                            className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-white/12 text-white/72 transition hover:bg-white/20 hover:text-white"
+                            aria-label="Clear search"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        className={sortDirection === "desc"
+                          ? "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/70 bg-white px-4 text-xs font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
+                          : "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/16 bg-white/10 px-4 text-xs text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white"
+                        }
+                        onClick={() => setSortDirection("desc")}
+                      >
+                        <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                        DESC
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className={sortDirection === "asc"
+                          ? "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/70 bg-white px-4 text-xs font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
+                          : "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/16 bg-white/10 px-4 text-xs text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white"
+                        }
+                        onClick={() => setSortDirection("asc")}
+                      >
+                        <ArrowUpNarrowWide className="h-3.5 w-3.5" />
+                        ASC
+                      </Button>
                     </div>
                   </Field>
                 </div>
@@ -324,7 +386,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   variant="ghost"
                   className={
                     selectedCampaigns.length === 0
-                      ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
+                      ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                       : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                   }
                   onClick={() => setSelectedCampaigns([])}
@@ -340,7 +402,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                       variant="ghost"
                       className={
                         selected
-                          ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
+                          ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                           : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                       }
                       onClick={() => toggleCampaign(campaign)}
@@ -352,10 +414,10 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-[18px] border border-white/10 bg-[#1f1413]/40">
+            <div className={`overflow-hidden rounded-[18px] border border-white/10 ${tableContainerBg}`}>
               <div className="max-h-[70vh] overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34">
                 <table className="w-full min-w-[900px] border-collapse text-left">
-                  <thead className="sticky top-0 z-10 bg-[#3f2527]/92 backdrop-blur-xl">
+                  <thead className={`sticky top-0 z-10 ${tableHeadBg} backdrop-blur-xl`}>
                     <tr>
                       <th className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52">
                         Sl No
@@ -371,11 +433,11 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.length > 0 ? (
-                      rows.map((row, rowIndex) => (
+                    {paginatedRows.length > 0 ? (
+                      paginatedRows.map((row, rowIndex) => (
                         <tr key={row.id} className="border-b border-white/8 last:border-b-0">
                           <td className="px-4 py-3 align-top text-sm tabular-nums text-white/52">
-                            {rowIndex + 1}
+                            {(safeCurrentPage - 1) * rowsPerPage + rowIndex + 1}
                           </td>
                           {columns.map((column) => {
                             const cellValue = getLeadCellValue(row, column.key) || "-";
@@ -412,6 +474,37 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                 </table>
               </div>
             </div>
+
+            {totalPages > 1 ? (
+              <div className="mt-4 flex items-center justify-between rounded-[22px] border border-white/10 bg-white/6 px-5 py-3">
+                <span className="text-sm text-white/58">
+                  Showing {(safeCurrentPage - 1) * rowsPerPage + 1}–{Math.min(safeCurrentPage * rowsPerPage, rows.length)} of {rows.length} leads
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
+                    disabled={safeCurrentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Prev
+                  </Button>
+                  <span className="min-w-[80px] text-center text-sm font-medium text-white tabular-nums">
+                    {safeCurrentPage} / {totalPages}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
+                    disabled={safeCurrentPage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             </div>
           </section>
         </div>

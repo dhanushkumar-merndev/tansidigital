@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, Delete, LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
+import { useTransition } from "react";
 import { useWebHaptics } from "web-haptics/react";
 
 const KEYPAD_ROWS = [
@@ -21,6 +22,7 @@ type PinLoginProps = {
 type KeypadValue = (typeof KEYPAD_ROWS)[number][number];
 
 export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLoginProps) {
+  const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const { trigger } = useWebHaptics();
   const [pin, setPin] = React.useState("");
@@ -35,6 +37,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
 
     setIsSubmitting(true);
     setError("");
+    await trigger("heavy");
 
     const response = await fetch("/api/auth/login", {
       method: "POST",
@@ -53,7 +56,10 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
     }
 
     await trigger("success");
-    router.refresh();
+    await trigger("heavy"); // Double tap feeling for success
+    startTransition(() => {
+      router.refresh();
+    });
   }
 
   async function handlePress(value: KeypadValue) {

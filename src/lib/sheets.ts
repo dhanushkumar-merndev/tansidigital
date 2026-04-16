@@ -1,5 +1,4 @@
 import { cache } from "react";
-import { google } from "googleapis";
 
 import { type ConcreteBrand } from "@/lib/brands";
 
@@ -44,6 +43,7 @@ export type WorkbookData = {
   defaultTabName: string;
   tabs: string[];
   rows: DashboardRow[];
+  digitalLeads: DigitalLeadImportEntry[];
   leadTableColumns: LeadTableColumn[];
   error?: string;
 };
@@ -291,22 +291,38 @@ function normalizeRow(
 async function getSheetsClient(
   scopes: string[] = ["https://www.googleapis.com/auth/spreadsheets.readonly"],
 ) {
-  const email = process.env.GOOGLE_CLIENT_EMAIL;
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  try {
+    // Using require instead of dynamic import is more stable for large CJS libraries in Next.js
+    const { google } = await import("googleapis");
+    
+    const email = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
-  if (!email || !privateKey) {
-    throw new Error("Missing Google service account credentials.");
+    if (!email || !privateKey) {
+      throw new Error("Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY in .env");
+    }
+
+    const auth = new google.auth.GoogleAuth({
+      credentials: {
+        client_email: email,
+        private_key: privateKey,
+      },
+      scopes,
+    });
+
+    return google.sheets({ version: "v4", auth });
+  } catch (error) {
+    console.error("Failed to initialize Google Sheets client:", error);
+    throw error;
   }
+}
 
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: email,
-      private_key: privateKey,
-    },
-    scopes,
-  });
-
-  return google.sheets({ version: "v4", auth });
+interface GSheetsResponse {
+  data: {
+    valueRanges?: Array<{
+      values?: string[][];
+    }>;
+  };
 }
 
 async function fetchRawSheets(): Promise<RawSheet[]> {
@@ -326,21 +342,26 @@ async function fetchRawSheets(): Promise<RawSheet[]> {
     spreadsheet.data.sheets
       ?.map((sheet) => sheet.properties?.title)
       .filter((title): title is string => Boolean(title))
-      .map((title) => `'${title.replace(/'/g, "''")}'`)
-      .map((title) => `${title}!A:ZZ`) ?? [];
+      .map((title: string) => `'${title.replace(/'/g, "''")}'`)
+      .map((title: string) => `${title}!A:ZZ`) ?? [];
 
   if (ranges.length === 0) {
     return [];
   }
 
-  const values = await sheets.spreadsheets.values.batchGet({
-    spreadsheetId,
-    ranges,
-    majorDimension: "ROWS",
-  });
+  const values = await Promise.race([
+    sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges,
+      majorDimension: "ROWS",
+    }),
+    new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error("Google Sheets request timed out (15s limit). Your data might be too large.")), 15000)
+    )
+  ]) as unknown as GSheetsResponse;
 
   return (
-    values.data.valueRanges?.map((sheetValues, index) => {
+    values.data.valueRanges?.map((sheetValues: { values?: string[][] }, index: number) => {
       const title = spreadsheet.data.sheets?.[index]?.properties?.title ?? `Sheet ${index + 1}`;
       const id = spreadsheet.data.sheets?.[index]?.properties?.sheetId ?? index;
       const rows = sheetValues.values ?? [];
@@ -379,6 +400,36 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
 
   try {
     const rawSheets = await fetchRawSheets();
+    const dataSheet = rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
+    const digitalLeads: DigitalLeadImportEntry[] = [];
+
+    if (dataSheet) {
+      const typeIdx = dataSheet.headers.indexOf(normalizeHeader("Report Type"));
+      const brandIdx = dataSheet.headers.indexOf(normalizeHeader("Report Brand"));
+      const dateIdx = dataSheet.headers.indexOf(normalizeHeader("Report Date"));
+      const actualIdx = dataSheet.headers.indexOf(normalizeHeader("Actual"));
+      const contactedIdx = dataSheet.headers.indexOf(normalizeHeader("Contacted"));
+      const nonContactedIdx = dataSheet.headers.indexOf(normalizeHeader("Non Contacted"));
+      const interestedIdx = dataSheet.headers.indexOf(normalizeHeader("Interested"));
+
+      if (typeIdx !== -1 && brandIdx !== -1 && dateIdx !== -1) {
+        dataSheet.rows.forEach((row) => {
+          if (
+            row[dataSheet.headers[typeIdx]] === DIGITAL_REPORT_TYPE &&
+            row[dataSheet.headers[brandIdx]] === "redwing"
+          ) {
+            digitalLeads.push({
+              date: row[dataSheet.headers[dateIdx]] || "",
+              actual: normalizeDigitalMetric(row[dataSheet.headers[actualIdx]]),
+              contacted: normalizeDigitalMetric(row[dataSheet.headers[contactedIdx]]),
+              nonContacted: normalizeDigitalMetric(row[dataSheet.headers[nonContactedIdx]]),
+              interested: normalizeDigitalMetric(row[dataSheet.headers[interestedIdx]]),
+            });
+          }
+        });
+      }
+    }
+
     const dataSheetConfig = extractDataSheetConfig(rawSheets);
     const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
     const tabs = usableSheets.map((sheet) => expandAliases(sheet.title));
@@ -393,6 +444,7 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
       defaultTabName,
       tabs,
       rows,
+      digitalLeads: digitalLeads.sort((a, b) => a.date.localeCompare(b.date)),
       leadTableColumns: dataSheetConfig.leadTableColumns,
     };
   } catch (error) {
@@ -404,6 +456,7 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
       defaultTabName,
       tabs: [],
       rows: [],
+      digitalLeads: [],
       leadTableColumns: [],
       error: message,
     };
@@ -486,11 +539,13 @@ function buildDigitalLeadPrompt(lastImportedDate: string | null) {
     "You are extracting data from a Redwing digital leads calling report image.",
     scopeLine,
     "Ignore total rows, blank rows, percentage columns, and any row where the numeric counts are missing.",
-    'Return strict JSON only with this exact shape: {"entries":[{"date":"YYYY-MM-DD","actual":0,"contacted":0,"nonContacted":0,"interested":0}]}',
+    'Return strict JSON only with this exact shape: {"entries":[{"date":"YYYY-MM-DD","actual":0,"contacted":0,"nonContacted":0,"interested":0}], "latestDateFound": "YYYY-MM-DD"}',
+    "The 'latestDateFound' must be the date of the very last entry in your extracted 'entries' list.",
     "Use the report date column from the image and convert it to YYYY-MM-DD.",
     "Extract only values that are clearly visible in the image. Do not guess missing numbers.",
   ].join(" ");
 }
+
 
 function getDigitalDataSheet(rawSheets: RawSheet[]) {
   return rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
@@ -505,19 +560,26 @@ function getLatestImportedDigitalDate(rawSheets: RawSheet[]) {
 
   if (reportTypeIndex === -1 || reportDateIndex === -1) return null;
 
-  let latestDate: string | null = null;
+  let latestDateValue: string | null = null;
+  let latestDateTime = 0;
 
   for (const row of dataSheet.rows) {
     if (row[dataSheet.headers[reportTypeIndex]] !== DIGITAL_REPORT_TYPE) continue;
 
-    const reportDate = row[dataSheet.headers[reportDateIndex]]?.trim() ?? "";
-    if (!reportDate) continue;
-    if (!latestDate || reportDate > latestDate) {
-      latestDate = reportDate;
+    const reportDateStr = row[dataSheet.headers[reportDateIndex]]?.trim() ?? "";
+    if (!reportDateStr) continue;
+
+    const parsed = parseDateValue(reportDateStr);
+    if (!parsed) continue;
+
+    const time = new Date(parsed).getTime();
+    if (time > latestDateTime) {
+      latestDateTime = time;
+      latestDateValue = parsed;
     }
   }
 
-  return latestDate;
+  return latestDateValue;
 }
 
 export async function getDigitalLeadImportMeta(): Promise<DigitalLeadImportMeta> {

@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
+import { useTransition } from "react";
 import { type DateRange } from "react-day-picker";
 
 import { DateRangePicker } from "@/components/date-range-picker";
@@ -114,9 +115,9 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-[var(--radix-popover-trigger-width)] rounded-[22px] border border-white/14 bg-[#4a262b]/96 p-2 text-white shadow-[0_20px_60px_rgba(15,5,7,0.32)] ring-0 backdrop-blur-xl"
+          className="w-[var(--radix-popover-trigger-width)] rounded-[22px] border border-white/24 bg-white/12 p-2 text-white shadow-[0_20px_60px_rgba(15,5,7,0.2)] ring-0 backdrop-blur-2xl"
         >
-          <div className="max-h-[280px] space-y-1 overflow-y-auto pr-1">
+          <div className="max-h-[280px] space-y-1 overflow-y-auto pr-1 [scrollbar-color:rgba(255,255,255,0.32)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/28 hover:[&::-webkit-scrollbar-thumb]:bg-white/40">
             {options.map((option) => {
               const active = option.value === value;
 
@@ -130,8 +131,8 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
                   }}
                   className={
                     active
-                      ? "w-full rounded-[14px] bg-[#a33340] px-4 py-2.5 text-left text-sm text-white"
-                      : "w-full rounded-[14px] px-4 py-2.5 text-left text-sm text-white/88 transition hover:bg-white hover:text-[#5e2329]"
+                      ? "w-full rounded-[14px] border border-white/30 bg-white/90 px-4 py-2.5 text-left text-sm text-black shadow-[0_6px_20px_rgba(255,255,255,0.12)]"
+                      : "w-full rounded-[14px] px-4 py-2.5 text-left text-sm text-white/88 transition hover:bg-white/16 hover:text-white"
                   }
                 >
                   {option.label}
@@ -265,13 +266,15 @@ function TimelineTooltip({
   const point = payload[0]?.payload;
   if (!point) return null;
 
+  const tooltipBg = activeBrand === "bigwing" ? "bg-[#1a1a1a]/95" : "bg-[#1e3f62]/95";
+
   return (
-    <div className="min-w-[180px] rounded-[18px] border border-white/12 bg-[#1a120d]/95 px-4 py-3 text-white shadow-[0_20px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl">
-      <div className="border-b border-white/10 pb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/58">
+    <div className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}>
+      <div className="pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
         {point.tooltipHeading}
       </div>
-      <div className="pt-2 text-sm font-semibold text-white">{point.tooltipLabel}</div>
-      <div className="mt-3 space-y-2">
+      <div className="text-base font-bold text-white">{point.tooltipLabel}</div>
+      <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
         {activeBrand !== "redwing" ? renderTooltipRow("Bigwing", point.bigwingLeads, "text-white") : null}
         {activeBrand !== "bigwing" ? renderTooltipRow("Redwing", point.redwingLeads, "text-white") : null}
         {renderTooltipRow("Total", point.leads, "text-white")}
@@ -294,16 +297,51 @@ function PlatformTooltip({
   const point = payload[0]?.payload;
   if (!point) return null;
 
+  const tooltipBg = activeBrand === "bigwing" ? "bg-[#1a1a1a]/95" : "bg-[#1e3f62]/95";
+
   return (
-    <div className="min-w-[180px] rounded-[18px] border border-white/12 bg-[#1a120d]/95 px-4 py-3 text-white shadow-[0_20px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl">
-      <div className="border-b border-white/10 pb-2 text-xs font-medium uppercase tracking-[0.18em] text-white/58">
+    <div className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}>
+      <div className="pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
         Platform / Source
       </div>
-      <div className="pt-2 text-sm font-semibold text-white">{point.name}</div>
-      <div className="mt-3 space-y-2">
+      <div className="text-base font-bold text-white">{point.name}</div>
+      <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
         {activeBrand !== "redwing" ? renderTooltipRow("Bigwing", point.bigwingValue, "text-white") : null}
         {activeBrand !== "bigwing" ? renderTooltipRow("Redwing", point.redwingValue, "text-white") : null}
         {renderTooltipRow("Total", point.value, "text-white")}
+      </div>
+    </div>
+  );
+}
+
+function GlassMetricTooltip({
+  active,
+  label,
+  payload,
+  labelHeading,
+  activeBrand,
+}: {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{ value?: number; name?: string }>;
+  labelHeading: string;
+  activeBrand?: Brand;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const item = payload[0];
+  const value = typeof item?.value === "number" ? item.value : Number(item?.value ?? 0);
+  const valueLabel = item?.name ?? "Value";
+  const tooltipBg = activeBrand === "bigwing" ? "bg-[#1a1a1a]/95" : "bg-[#1e3f62]/95";
+
+  return (
+    <div className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}>
+      <div className="pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
+        {labelHeading}
+      </div>
+      <div className="text-base font-bold text-white">{label}</div>
+      <div className="mt-3 border-t border-white/10 pt-3">
+        {renderTooltipRow(valueLabel, value, "text-white")}
       </div>
     </div>
   );
@@ -519,6 +557,7 @@ manifest.href = `/brand-manifest?brand=${brand}`;
 }
 
 export function DashboardClient({ workbook, initialBrand }: DashboardClientProps) {
+  const [isPending, startTransition] = useTransition();
   const [isMounted, setIsMounted] = React.useState(false);
 
   React.useEffect(() => {
@@ -542,7 +581,21 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const [digitalPin, setDigitalPin] = React.useState("");
   const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
   const [isDigitalLoading, setIsDigitalLoading] = React.useState(false);
-  const [digitalError, setDigitalError] = React.useState("");
+  const [digitalError, setDigitalError] = React.useState<string | null>(null);
+
+  // Lock scroll when digital modal is open
+  React.useEffect(() => {
+    if (isDigitalModalOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
+    }
+    return () => {
+      document.body.style.overflow = "unset";
+    };
+  }, [isDigitalModalOpen]);
+
+
   const [digitalMeta, setDigitalMeta] = React.useState<DigitalLeadImportMeta | null>(null);
   const [digitalResponseText, setDigitalResponseText] = React.useState("");
   const [digitalSuccessMessage, setDigitalSuccessMessage] = React.useState("");
@@ -637,6 +690,19 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
       return true;
     });
   }, [brandRows, campaignFilter, dateRange, normalizedSearchFilter]);
+
+  const filteredDigitalLeads = React.useMemo(() => {
+    const fromDate = dateRange?.from;
+    const toDate = dateRange?.to;
+    const from = fromDate ? startOfDay(fromDate) : null;
+    const to = toDate ? endOfDay(toDate) : null;
+
+    return (workbook.digitalLeads || []).filter((entry) => {
+      const d = parseDate(entry.date);
+      if (!d) return false;
+      return (!from || !isBefore(d, from)) && (!to || !isAfter(d, to));
+    });
+  }, [workbook.digitalLeads, dateRange]);
 
   const summary = React.useMemo(() => summarizeRows(filteredRows), [filteredRows]);
 
@@ -805,8 +871,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const pieColors = ["#ffffff", "#8de0ff", "#eefbff", "#d8f3ff", "#b9eaff"];
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.refresh();
+    startTransition(async () => {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.refresh();
+    });
   }
 
   async function handleDigitalPinSubmit() {
@@ -926,10 +994,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   }
 
   function handleBrandChange(nextBrand: Brand) {
-    setBrand(nextBrand);
-    const nextSearch = new URLSearchParams(searchParams.toString());
-    nextSearch.set("brand", nextBrand);
-    React.startTransition(() => {
+    startTransition(() => {
+      setBrand(nextBrand);
+      const nextSearch = new URLSearchParams(searchParams.toString());
+      nextSearch.set("brand", nextBrand);
       router.replace(`${pathname}?${nextSearch.toString()}`, { scroll: false });
     });
   }
@@ -976,7 +1044,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         variant="ghost"
                         className={
                           selected
-                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-[#8f313a] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#8f313a]"
+                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                             : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
@@ -1015,7 +1083,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
           </section>
 
           <section className="grid gap-4 rounded-[24px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
-            <DateRangePicker date={dateRange} onSelect={setDateRange} />
+            <DateRangePicker date={dateRange} onSelect={setDateRange} brand={brand} />
 
             <FilterSelect
               id="campaign-filter"
@@ -1071,7 +1139,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     </PopoverTrigger>
                     <PopoverContent
                       align="end"
-                      className="w-[320px] rounded-[22px] border border-white/14 bg-[#C52F33] p-4 text-white shadow-[0_20px_60px_rgba(15,5,7,0.32)] ring-0 backdrop-blur-xl"
+                      className="w-[320px] rounded-[22px] border border-white/28 bg-white/14 p-4 text-white shadow-[0_20px_60px_rgba(15,5,7,0.2)] ring-0 backdrop-blur-2xl"
                     >
                       <div className="space-y-3">
                         <div>
@@ -1103,9 +1171,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   <Button
                     variant="ghost"
                     className="shrink-0 rounded-full border border-white/12 bg-white/8 px-4 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                    onClick={() => router.push(leadsPageHref)}
+                    onClick={() => startTransition(() => router.push(leadsPageHref))}
+                    disabled={isPending}
                   >
-                    Open leads
+                    {isPending ? "Loading..." : "Open leads"}
                   </Button>
                 </div>
               </div>
@@ -1122,7 +1191,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                           tickFormatter={(value) => timelineData.find((d) => d.date === value)?.label ?? ""}
                         />
                         <YAxis stroke="rgba(255,255,255,0.5)" />
-                        <Tooltip content={<TimelineTooltip activeBrand={brand} />} />
+                        <Tooltip content={<TimelineTooltip activeBrand={brand} />} wrapperStyle={{ zIndex: 9999 }} />
                         <Legend />
                         <Line type="monotone" dataKey="leads" stroke={chartPrimary} strokeWidth={3} dot={false} />
                       </LineChart>
@@ -1154,7 +1223,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                             <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
                           ))}
                         </Pie>
-                        <Tooltip content={<PlatformTooltip activeBrand={brand} />} />
+                        <Tooltip content={<PlatformTooltip activeBrand={brand} />} wrapperStyle={{ zIndex: 9999 }} />
                         <Legend />
                       </PieChart>
                     </ResponsiveContainer>
@@ -1178,8 +1247,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         <XAxis dataKey="campaign" stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
                         <YAxis stroke="rgba(255,255,255,0.5)" />
                         <Tooltip
-                          contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }}
+                          content={<GlassMetricTooltip labelHeading="Campaign" activeBrand={brand} />}
                           cursor={{ fill: chartHoverCursor }}
+                          wrapperStyle={{ zIndex: 9999 }}
                         />
                         <Legend />
                         <Bar dataKey="leads" fill={chartPrimary} radius={[12, 12, 0, 0]} activeBar={{ stroke: "none" }} />
@@ -1241,8 +1311,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
                             <YAxis dataKey="response" type="category" width={36} stroke="rgba(255,255,255,0.5)" interval={0} />
                             <Tooltip
-                              contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }}
+                              content={<GlassMetricTooltip labelHeading="Response" activeBrand={brand} />}
                               cursor={{ fill: chartHoverCursor }}
+                              wrapperStyle={{ zIndex: 9999 }}
                             />
                             <Bar dataKey="leads" fill={chartPrimary} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
                           </BarChart>
@@ -1276,8 +1347,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
                             <YAxis dataKey="location" type="category" width={120} stroke="rgba(255,255,255,0.5)" interval={0} />
                             <Tooltip
-                              contentStyle={{ backgroundColor: "#1a120d", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "18px", color: "#fff" }}
+                              content={<GlassMetricTooltip labelHeading="Location" activeBrand={brand} />}
                               cursor={{ fill: chartHoverCursor }}
+                              wrapperStyle={{ zIndex: 9999 }}
                             />
                             <Bar dataKey="leads" fill={chartAccent} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
                           </BarChart>
@@ -1310,37 +1382,72 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                 </div>
               ) : null}
 
-              {brand === "redwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-                  <div className="mb-6">
-                    <h2 className="text-xl font-semibold">Digital Leads Import</h2>
-                    <p className="mt-1 text-sm text-white/58">
-                      Generate the extraction prompt, paste the ChatGPT JSON, and append the result into `DATA`.
-                    </p>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white/72">
-                      Last imported date:{" "}
-                      <span className="font-semibold text-white">
-                        {digitalMeta?.lastImportedDate ?? "No imported rows yet"}
-                      </span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      className="w-full rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                      onClick={openDigitalModal}
-                    >
-                      Open importer
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
             </div>
           </section>
 
+          {brand === "redwing" ? (
+            <div className=" rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="mb-6">
+                <h2 className="text-xl font-semibold">Digital performance</h2>
+                <p className="mt-1 text-sm text-white/58">
+                  Trends for actual numbers, contacted, and interested leads over time.
+                </p>
+              </div>
+              <div className="h-[340px] min-w-0">
+                {isMounted ? (
+                  <ResponsiveContainer id="digital-performance-chart" width="100%" height={340}>
+                    <LineChart data={filteredDigitalLeads}>
+                      <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        stroke="rgba(255,255,255,0.5)"
+                        tick={{ fontSize: 10 }}
+                        tickFormatter={(val) => val.split("-").slice(1).join("/")}
+                      />
+                      <YAxis stroke="rgba(255,255,255,0.5)" tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#1a1a1a",
+                          border: "1px solid rgba(255,255,255,0.1)",
+                          borderRadius: "12px",
+                          fontSize: "12px",
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: "10px", marginTop: "10px" }} />
+                      <Line
+                        type="monotone"
+                        dataKey="actual"
+                        name="Actual"
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="contacted"
+                        name="Contacted"
+                        stroke="#8de0ff"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="interested"
+                        name="Interested"
+                        stroke="#eefbff"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           {isDigitalModalOpen ? (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-sm">
-              <div className="w-full max-w-2xl rounded-[30px] border border-white/14 bg-[#103a64] p-5 shadow-[0_40px_120px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+              <div className="w-full max-w-lg rounded-[30px] border border-white/14 bg-[#103a64] p-8 shadow-[0_40px_120px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
@@ -1359,7 +1466,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   <button
                     type="button"
                     onClick={closeDigitalModal}
-                    className="flex h-9 w-9 items-center justify-center rounded-full border border-white/12 bg-white/8 text-white/82 transition hover:bg-white/12 hover:text-white"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/8 text-white/82 transition hover:bg-white/12 hover:text-white"
                     aria-label="Close digital import modal"
                   >
                     <X className="h-4 w-4" />
@@ -1370,7 +1477,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   <div className="space-y-4">
                     <Field>
                       <FieldLabel htmlFor="digital-pin">Digital PIN</FieldLabel>
-                      <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
+                      <div className="relative h-[48px] w-full rounded-[22px] border border-white/16 bg-white/10">
                         <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
                         <input
                           id="digital-pin"
@@ -1425,7 +1532,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       <textarea
                         readOnly
                         value={digitalMeta?.prompt ?? ""}
-                        className="min-h-[132px] w-full resize-none rounded-[20px] border border-white/12 bg-[#0a2744]/70 px-4 py-3 text-sm leading-6 text-white/88 outline-none"
+                        className="custom-scrollbar min-h-[132px] w-full resize-none rounded-[20px] border border-white/12 bg-[#0a2744]/70 px-4 py-3 text-sm leading-6 text-white/88 outline-none"
                       />
                     </div>
 
@@ -1436,7 +1543,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         value={digitalResponseText}
                         onChange={(event) => setDigitalResponseText(event.target.value)}
                         placeholder='{"entries":[{"date":"2026-04-16","actual":72,"contacted":45,"nonContacted":27,"interested":17}]}'
-                        className="min-h-[220px] w-full resize-y rounded-[24px] border border-white/16 bg-white/10 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/34"
+                        className="custom-scrollbar min-h-[220px] w-full resize-y rounded-[24px] border border-white/16 bg-white/10 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/34"
                       />
                     </Field>
 
