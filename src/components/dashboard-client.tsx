@@ -1012,8 +1012,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
       style={{ backgroundColor: dashboardBackground }}
     >
       <div className="min-h-screen">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="rounded-[24px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-8 px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
+          <section className="relative rounded-[24px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
@@ -1033,7 +1033,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               </div>
 
               <div className="flex flex-col gap-3 lg:min-h-[132px] lg:items-end lg:justify-between">
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-center lg:justify-end gap-2">
                   {brandOptions.map((option) => {
                     const selected = option === brand;
                     const label = option === "all" ? "All" : BRAND_CONFIG[option].label;
@@ -1055,13 +1055,13 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   })}
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex justify-center lg:justify-end">
                   <div className="flex items-center gap-2">
                     {brand === "redwing" ? (
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                        className="rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white absolute top-4 right-16 lg:static sm:right-24 md:right-32 lg:right-auto"
                         onClick={openDigitalModal}
                         aria-label="Open digital leads importer"
                       >
@@ -1070,11 +1070,12 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     ) : null}
                     <Button
                       variant="ghost"
-                      className="gap-2 rounded-full border border-white/12 bg-white/8 px-4 sm:px-5 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                      size="icon"
+                      className="rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white absolute top-4 right-4 lg:static lg:w-auto lg:h-auto lg:px-5 lg:py-1 lg:gap-2"
                       onClick={handleLogout}
                     >
                       <LogOut className="h-4 w-4" />
-                      Logout
+                      <span className="hidden lg:inline">Logout</span>
                     </Button>
                   </div>
                 </div>
@@ -1082,7 +1083,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             </div>
           </section>
 
-          <section className="grid gap-4 rounded-[24px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
+          <section className="grid gap-3 sm:gap-4 rounded-[24px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
             <DateRangePicker date={dateRange} onSelect={setDateRange} brand={brand} />
 
             <FilterSelect
@@ -1097,15 +1098,15 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             <AdNameSearchInput id="ad-search" suggestions={adNameSuggestions} onSearchChange={setSearchFilter} />
           </section>
 
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
             {[
               { label: "Total Leads", value: formatCompactNumber(summary.totalLeads), hint: "Filtered lead rows", icon: Users },
               { label: "Unique Phones", value: formatCompactNumber(summary.uniquePhones), hint: "Distinct phone + campaign pairs", icon: Target },
               { label: "Campaigns", value: formatCompactNumber(summary.campaigns), hint: `${summary.tabs} active tabs`, icon: Layers3 },
               { label: "Platforms", value: formatCompactNumber(summary.platforms), hint: `${summary.organicLeads} organic leads`, icon: BarChart3 },
             ].map((card) => (
-              <div key={card.label} className="rounded-[24px] border border-white/14 bg-white/10 p-3.5 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
-                <div className="mb-2 sm:mb-6 flex items-center justify-between">
+              <div key={card.label} className="rounded-[24px] border border-white/14 bg-white/10 p-3.5 sm:p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
+                <div className="mb-2 sm:mb-3 sm:mb-6 flex items-center justify-between">
                   <span className="text-[11px] sm:text-sm text-white/62 uppercase tracking-tight">{card.label}</span>
                   <div className="flex h-7 w-7 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-2xl border border-white/12 bg-white/10">
                     <card.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
@@ -1117,9 +1118,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             ))}
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-            <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-              <div className="mb-6 flex items-start justify-between gap-4">
+          <section className="grid gap-3 sm:gap-4 xl:grid-cols-[1.4fr_1fr]">
+            <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="mb-3 sm:mb-6 flex items-start justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-semibold">Lead timeline</h2>
                   <p className="mt-1 text-sm text-white/58">
@@ -1190,7 +1191,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                           minTickGap={24}
                           tickFormatter={(value) => timelineData.find((d) => d.date === value)?.label ?? ""}
                         />
-                        <YAxis stroke="rgba(255,255,255,0.5)" />
+                        <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
                         <Tooltip content={<TimelineTooltip activeBrand={brand} />} wrapperStyle={{ zIndex: 9999 }} />
                         <Legend />
                         <Line type="monotone" dataKey="leads" stroke={chartPrimary} strokeWidth={3} dot={false} />
@@ -1200,8 +1201,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                 </div>
             </div>
 
-            <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-              <div className="mb-6">
+            <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="mb-3 sm:mb-6">
                 <h2 className="text-xl font-semibold">Platform mix</h2>
                 <p className="mt-1 text-sm text-white/58">Lead split by platform values from your sheet.</p>
               </div>
@@ -1232,10 +1233,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             </div>
           </section>
 
-          <section className="grid items-start gap-4 xl:grid-cols-[1.15fr_1fr]">
+          <section className="grid items-start gap-3 sm:gap-4 xl:grid-cols-[1.15fr_1fr]">
             <div className="grid gap-4">
-              <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-                <div className="mb-6">
+              <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="mb-3 sm:mb-6">
                   <h2 className="text-xl font-semibold">Top campaigns</h2>
                   <p className="mt-1 text-sm text-white/58">Lead count by campaign name.</p>
                 </div>
@@ -1245,7 +1246,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       <BarChart data={campaignData}>
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                         <XAxis dataKey="campaign" stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
-                        <YAxis stroke="rgba(255,255,255,0.5)" />
+                        <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
                         <Tooltip
                           content={<GlassMetricTooltip labelHeading="Campaign" activeBrand={brand} />}
                           cursor={{ fill: chartHoverCursor }}
@@ -1260,7 +1261,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               </div>
 
               {brand === "all" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-8">
                     <h2 className="text-xl font-semibold">Today Campaign Leads</h2>
                     <p className="mt-1 text-sm text-white/58">
@@ -1293,8 +1294,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
             <div className="grid gap-4">
               {brand !== "redwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-                  <div className="mb-6">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                  <div className="mb-3 sm:mb-6">
                     <h2 className="text-xl font-semibold">Bigwing Yes / No</h2>
                     <p className="mt-1 text-sm text-white/58">Response count from the Bigwing whitefield / hoodi question.</p>
                   </div>
@@ -1309,7 +1310,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                           >
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
-                            <YAxis dataKey="response" type="category" width={36} stroke="rgba(255,255,255,0.5)" interval={0} />
+                            <YAxis dataKey="response" type="category" width={30} stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
                             <Tooltip
                               content={<GlassMetricTooltip labelHeading="Response" activeBrand={brand} />}
                               cursor={{ fill: chartHoverCursor }}
@@ -1329,7 +1330,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "bigwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-5">
                     <h2 className="text-xl font-semibold">Redwing Locations</h2>
                     <p className="mt-1 text-sm text-white/58">Top Redwing location values from the filtered rows.</p>
@@ -1345,7 +1346,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                           >
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
-                            <YAxis dataKey="location" type="category" width={120} stroke="rgba(255,255,255,0.5)" interval={0} />
+                            <YAxis dataKey="location" type="category" width={100} stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
                             <Tooltip
                               content={<GlassMetricTooltip labelHeading="Location" activeBrand={brand} />}
                               cursor={{ fill: chartHoverCursor }}
@@ -1365,8 +1366,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "all" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-                  <div className="mb-6">
+                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                  <div className="mb-3 sm:mb-6">
                     <h2 className="text-xl font-semibold">View all leads</h2>
                     <p className="mt-1 text-sm text-white/58">
                       Open a searchable glass table for every {BRAND_CONFIG[brand].label} lead.
@@ -1386,8 +1387,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
           </section>
 
           {brand === "redwing" ? (
-            <div className=" rounded-[34px] border border-white/14 bg-white/10 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-              <div className="mb-6">
+            <div className="   rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="mb-3 sm:mb-6">
                 <h2 className="text-xl font-semibold">Digital performance</h2>
                 <p className="mt-1 text-sm text-white/58">
                   Trends for actual numbers, contacted, and interested leads over time.
@@ -1404,7 +1405,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         tick={{ fontSize: 10 }}
                         tickFormatter={(val) => val.split("-").slice(1).join("/")}
                       />
-                      <YAxis stroke="rgba(255,255,255,0.5)" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
                       <Tooltip
                         contentStyle={{
                           backgroundColor: "#1a1a1a",
