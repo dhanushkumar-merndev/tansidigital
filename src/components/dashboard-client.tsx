@@ -250,8 +250,12 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const [isMounted, setIsMounted] = React.useState(false);
 
   React.useEffect(() => {
-    // Small delay to ensure browser layout is stable before charts measure
-    const timer = setTimeout(() => setIsMounted(true), 150);
+    // Increased delay to 300ms to ensure browser layout is fully stable on hard refresh
+    const timer = setTimeout(() => {
+      setIsMounted(true);
+      // Trigger a resize event to force charts to measure updated layout
+      window.dispatchEvent(new Event("resize"));
+    }, 300);
     return () => clearTimeout(timer);
   }, []);
 
@@ -372,10 +376,6 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     .map(([response, leads]) => ({ response, leads }))
     .sort((a, b) => b.leads - a.leads);
 
-  const locationData = Array.from(locationMap.entries())
-    .map(([location, leads]) => ({ location, leads }))
-    .sort((a, b) => b.leads - a.leads)
-    .slice(0, 8);
 
   const redwingLocationData = Array.from(redwingLocationMap.entries())
     .map(([location, leads]) => ({ location, leads }))
@@ -518,9 +518,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                 <h2 className="text-xl font-semibold">Lead timeline</h2>
                 <p className="mt-1 text-sm text-white/58">Daily lead volume from `created_time`.</p>
               </div>
-                <div className="h-[320px]">
+                <div className="h-[320px] min-w-0">
                   {isMounted ? (
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <ResponsiveContainer id="timeline-chart" width="100%" height={320} minWidth={0} minHeight={0}>
                       <LineChart data={timelineData}>
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                         <XAxis dataKey="date" stroke="rgba(255,255,255,0.5)" tickFormatter={(value) => value.slice(5)} />
@@ -539,9 +539,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                 <h2 className="text-xl font-semibold">Platform mix</h2>
                 <p className="mt-1 text-sm text-white/58">Lead split by platform values from your sheet.</p>
               </div>
-                <div className="h-[320px]">
+                <div className="h-[320px] min-w-0">
                   {isMounted ? (
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <ResponsiveContainer id="platform-chart" width="100%" height={320} minWidth={0} minHeight={0}>
                       <PieChart>
                         <Pie
                           data={platformData}
@@ -573,9 +573,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   <h2 className="text-xl font-semibold">Top campaigns</h2>
                   <p className="mt-1 text-sm text-white/58">Lead count by campaign name.</p>
                 </div>
-                <div className={brand === "redwing" ? "h-[390px]" : "h-[330px]"}>
+                <div className={(brand === "redwing" ? "h-[390px]" : "h-[330px]") + " min-w-0"}>
                   {isMounted ? (
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <ResponsiveContainer id="campaign-chart" width="100%" height={brand === "redwing" ? 390 : 330} minWidth={0} minHeight={0}>
                       <BarChart data={campaignData}>
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                         <XAxis dataKey="campaign" stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
@@ -628,10 +628,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     <h2 className="text-xl font-semibold">Bigwing Yes / No</h2>
                     <p className="mt-1 text-sm text-white/58">Response count from the Bigwing whitefield / hoodi question.</p>
                   </div>
-                  <div className="h-[160px]">
+                  <div className="h-[160px] min-w-0">
                     {bigwingResponseData.length > 0 ? (
                       isMounted ? (
-                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                        <ResponsiveContainer id="bigwing-chart" width="100%" height={160} minWidth={0} minHeight={0}>
                           <BarChart data={bigwingResponseData} layout="vertical" margin={{ left: 0, right: 0 }}>
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
@@ -656,10 +656,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     <h2 className="text-xl font-semibold">Redwing Locations</h2>
                     <p className="mt-1 text-sm text-white/58">Top Redwing location values from the filtered rows.</p>
                   </div>
-                  <div style={{ height: redwingLocationChartHeight }}>
+                  <div style={{ height: redwingLocationChartHeight }} className="min-w-0">
                     {redwingLocationData.length > 0 ? (
                       isMounted ? (
-                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                        <ResponsiveContainer id="redwing-chart" width="100%" height={redwingLocationChartHeight} minWidth={0} minHeight={0}>
                           <BarChart
                             data={redwingLocationData}
                             layout="vertical"
