@@ -1,10 +1,9 @@
-
 import type { Metadata } from "next";
 
-import { DashboardClient } from "@/components/dashboard-client";
+import { LeadsPageClient } from "@/components/leads-page-client";
 import { PinLogin } from "@/components/pin-login";
 import { isAuthenticated } from "@/lib/auth";
-import { getBrandAssets, normalizeBrand } from "@/lib/brands";
+import { getBrandAssets, type ConcreteBrand, normalizeBrand } from "@/lib/brands";
 import { getWorkbookData } from "@/lib/sheets";
 
 type PageProps = {
@@ -13,20 +12,19 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
+function normalizeLeadBrand(value: string | null | undefined): ConcreteBrand {
+  const brand = normalizeBrand(value);
+  return brand === "redwing" ? "redwing" : "bigwing";
+}
+
 export async function generateMetadata({ searchParams }: PageProps): Promise<Metadata> {
   const params = await searchParams;
-  const brand = normalizeBrand(
-    Array.isArray(params.brand) ? params.brand[0] : params.brand,
-  );
+  const brand = normalizeLeadBrand(Array.isArray(params.brand) ? params.brand[0] : params.brand);
   const assets = getBrandAssets(brand);
-  const title =
-    brand === "all"
-      ? "Bigwing + Redwing Analytics Dashboard"
-      : `${assets.label} Analytics Dashboard`;
 
   return {
-    title,
-    description: "Brand-aware campaign dashboard with PIN access and live Google Sheets analytics.",
+    title: `${assets.label} Leads Table`,
+    description: `Searchable ${assets.label} leads table powered by your Google Sheets data.`,
     icons: {
       icon: [
         { url: assets.faviconIco },
@@ -39,9 +37,9 @@ export async function generateMetadata({ searchParams }: PageProps): Promise<Met
   };
 }
 
-export default async function Home({ searchParams }: PageProps) {
+export default async function LeadsPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const initialBrand = normalizeBrand(
+  const initialBrand = normalizeLeadBrand(
     Array.isArray(params.brand) ? params.brand[0] : params.brand,
   );
   const authenticated = await isAuthenticated();
@@ -52,5 +50,5 @@ export default async function Home({ searchParams }: PageProps) {
 
   const workbook = await getWorkbookData();
 
-  return <DashboardClient workbook={workbook} initialBrand={initialBrand} />;
+  return <LeadsPageClient workbook={workbook} initialBrand={initialBrand} />;
 }

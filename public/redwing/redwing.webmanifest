@@ -1,0 +1,20 @@
+{
+  "name": "RedWing Honda",
+  "short_name": "RedWing",
+  "start_url": "/redwing",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#e60023",
+  "icons": [
+    {
+      "src": "/redwing/android-chrome-redwing-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/redwing/android-chrome-redwing-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
