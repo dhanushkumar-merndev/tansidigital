@@ -17,11 +17,11 @@ import {
   YAxis,
 } from "recharts";
 import {
-  BarChart3,
   ChevronDown,
   Clipboard,
   CircleAlert,
   FileUp,
+  IndianRupee,
   KeyRound,
   Layers3,
   LogOut,
@@ -53,8 +53,6 @@ type Summary = {
   uniquePhones: number;
   campaigns: number;
   tabs: number;
-  organicLeads: number;
-  platforms: number;
 };
 
 type TimelineDatum = {
@@ -77,6 +75,14 @@ type PlatformDatum = {
 type DigitalLeadImportMeta = {
   lastImportedDate: string | null;
   prompt: string;
+};
+
+type MetaSpendSummary = {
+  configured: boolean;
+  currency: string;
+  matchedCampaigns: number;
+  requestedCampaigns: number;
+  totalSpend: number;
 };
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
@@ -240,6 +246,15 @@ function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatCurrencyAmount(value: number, currency = "INR") {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
@@ -518,16 +533,12 @@ function summarizeRows(rows: DashboardRow[]): Summary {
   const uniquePhones = getUniquePhoneCampaignCount(rows);
   const campaigns = new Set(rows.map((row) => row.campaign).filter(Boolean)).size;
   const tabs = new Set(rows.map((row) => row.tabName).filter(Boolean)).size;
-  const organicLeads = rows.filter((row) => row.isOrganic).length;
-  const platforms = new Set(rows.map((row) => row.platform).filter(Boolean)).size;
 
   return {
     totalLeads,
     uniquePhones,
     campaigns,
     tabs,
-    organicLeads,
-    platforms,
   };
 }
 
@@ -625,6 +636,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const [digitalMeta, setDigitalMeta] = React.useState<DigitalLeadImportMeta | null>(null);
   const [digitalResponseText, setDigitalResponseText] = React.useState("");
   const [digitalSuccessMessage, setDigitalSuccessMessage] = React.useState("");
+  const [metaSpend, setMetaSpend] = React.useState<MetaSpendSummary | null>(null);
+  const [metaSpendError, setMetaSpendError] = React.useState<string | null>(null);
+  const [isMetaSpendLoading, setIsMetaSpendLoading] = React.useState(false);
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -717,6 +731,116 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     });
   }, [brandRows, campaignFilter, dateRange, normalizedSearchFilter]);
 
+  const filteredCampaignNames = React.useMemo(
+    () =>
+      Array.from(new Set(filteredRows.map((row) => row.campaign).filter(Boolean))).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    [filteredRows],
+  );
+
+  const metaSpendDateRange = React.useMemo(() => {
+    const fromDate = dateRange?.from ?? dateRange?.to;
+    const toDate = dateRange?.to ?? dateRange?.from;
+
+    if (!fromDate || !toDate) {
+      return null;
+    }
+
+    return {
+      from: getIstDateKey(fromDate),
+      to: getIstDateKey(toDate),
+    };
+  }, [dateRange]);
+
+  const loadMetaSpend = React.useEffectEvent(
+    async ({
+      campaigns,
+      from,
+      signal,
+      to,
+    }: {
+      campaigns: string[];
+      from: string;
+      signal: AbortSignal;
+      to: string;
+    }) => {
+      try {
+        const response = await fetch("/api/meta/spend", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            campaigns,
+            from,
+            to,
+          }),
+          cache: "no-store",
+          signal,
+        });
+        const data = (await response.json().catch(() => null)) as
+          | ({
+              ok?: boolean;
+              error?: string;
+            } & Partial<MetaSpendSummary>)
+          | null;
+
+        if (!response.ok || !data?.ok) {
+          throw new Error(data?.error || "Unable to fetch Meta spend right now.");
+        }
+
+        setMetaSpend({
+          configured: Boolean(data.configured),
+          currency: typeof data.currency === "string" && data.currency ? data.currency : "INR",
+          matchedCampaigns: Number(data.matchedCampaigns ?? 0),
+          requestedCampaigns: Number(data.requestedCampaigns ?? 0),
+          totalSpend: Number(data.totalSpend ?? 0),
+        });
+        setMetaSpendError(null);
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+
+        setMetaSpend(null);
+        setMetaSpendError(
+          error instanceof Error ? error.message : "Unable to fetch Meta spend right now.",
+        );
+      } finally {
+        if (!signal.aborted) {
+          setIsMetaSpendLoading(false);
+        }
+      }
+    },
+  );
+
+  React.useEffect(() => {
+    if (!metaSpendDateRange) {
+      setMetaSpend(null);
+      setMetaSpendError(null);
+      setIsMetaSpendLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    setMetaSpend(null);
+    setMetaSpendError(null);
+    setIsMetaSpendLoading(true);
+
+    loadMetaSpend({
+      campaigns: filteredCampaignNames,
+      from: metaSpendDateRange.from,
+      signal: controller.signal,
+      to: metaSpendDateRange.to,
+    });
+
+    return () => {
+      controller.abort();
+    };
+  }, [filteredCampaignNames, metaSpendDateRange]);
+
   const filteredDigitalLeads = React.useMemo(() => {
     const fromDate = dateRange?.from;
     const toDate = dateRange?.to;
@@ -731,6 +855,38 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   }, [workbook.digitalLeads, dateRange]);
 
   const summary = React.useMemo(() => summarizeRows(filteredRows), [filteredRows]);
+
+  const spendCardValue = React.useMemo(() => {
+    if (isMetaSpendLoading) {
+      return "...";
+    }
+
+    if (!metaSpend?.configured) {
+      return "--";
+    }
+
+    return formatCurrencyAmount(metaSpend.totalSpend, metaSpend.currency);
+  }, [isMetaSpendLoading, metaSpend]);
+
+  const spendCardHint = React.useMemo(() => {
+    if (isMetaSpendLoading) {
+      return "Fetching live Meta spend.";
+    }
+
+    if (metaSpendError) {
+      return metaSpendError;
+    }
+
+    if (!metaSpend?.configured) {
+      return "Add META_ACCESS_TOKEN to enable spend.";
+    }
+
+    if (metaSpend.requestedCampaigns === 0) {
+      return "No campaigns match the current filters.";
+    }
+
+    return `${metaSpend.matchedCampaigns} matching campaign${metaSpend.matchedCampaigns === 1 ? "" : "s"} from Meta Insights`;
+  }, [isMetaSpendLoading, metaSpend, metaSpendError]);
 
   const todayCampaignRows = React.useMemo(
     () =>
@@ -1139,7 +1295,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               { label: "Total Leads", value: formatCompactNumber(summary.totalLeads), hint: "Filtered lead rows", icon: Users },
               { label: "Unique Phones", value: formatCompactNumber(summary.uniquePhones), hint: "Distinct phone + campaign pairs", icon: Target },
               { label: "Campaigns", value: formatCompactNumber(summary.campaigns), hint: `${summary.tabs} active tabs`, icon: Layers3 },
-              { label: "Platforms", value: formatCompactNumber(summary.platforms), hint: `${summary.organicLeads} organic leads`, icon: BarChart3 },
+              { label: "Cost Spent", value: spendCardValue, hint: spendCardHint, icon: IndianRupee },
             ].map((card) => (
               <div key={card.label} className="rounded-[24px] border border-white/14 bg-white/10 p-3.5 sm:p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
                 <div className="mb-2 sm:mb-3 sm:mb-6 flex items-center justify-between">
