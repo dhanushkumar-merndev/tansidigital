@@ -362,13 +362,27 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
         <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
           <thead className={`sticky top-0 z-10 ${tableHeadBg} backdrop-blur-xl`}>
             <tr>
-              <th className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52">
+              <th className="w-[72px] min-w-[72px] max-w-[72px] border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52">
                 Sl No
               </th>
               {columns.map((column) => (
                 <th
                   key={column.key}
-                  className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52"
+                  className={`border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52 ${
+                    column.key === "tab_name"
+                      ? "w-[160px] min-w-[160px] max-w-[160px]"
+                      : column.key === "full_name"
+                        ? "w-[280px] min-w-[280px] max-w-[280px]"
+                        : column.key === "email"
+                          ? "w-[350px] min-w-[350px] max-w-[350px]"
+                      : column.key === "phone_number"
+                      ? "w-[160px] min-w-[160px] max-w-[160px]"
+                      : column.key === "location"
+                        ? "w-[170px] min-w-[170px] max-w-[170px]"
+                        : column.key === "date"
+                          ? "w-[160px] min-w-[160px] max-w-[160px]"
+                          : ""
+                  }`}
                 >
                   {column.label}
                 </th>
@@ -379,26 +393,61 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
             {paginatedRows.length > 0 ? (
               paginatedRows.map((row, rowIndex) => (
                 <tr key={row.id} className="border-b border-white/8 last:border-b-0">
-                  <td className="px-4 py-3 align-top text-sm tabular-nums text-white/52">
+                  <td className="w-[72px] min-w-[72px] max-w-[72px] px-4 py-3 align-top text-sm tabular-nums text-white/52">
                     {(safeCurrentPage - 1) * rowsPerPage + rowIndex + 1}
                   </td>
                   {columns.map((column) => {
                     const cellValue = getLeadCellValue(row, column.key) || "-";
                     const isEmail = column.key === "email";
-                    const isTruncated = isEmail && cellValue.length > 25;
-                    const displayValue = isTruncated ? `${cellValue.slice(0, 25)}...` : cellValue;
+                    const isTabName = column.key === "tab_name";
+                    const isEmailTruncated = !isTableExpanded && isEmail && cellValue.length > 25;
+                    const isTabNameTruncated = isTabName && cellValue.length > 15;
+                    const isTruncated = isEmailTruncated || isTabNameTruncated;
+                    const displayValue = isEmailTruncated
+                      ? `${cellValue.slice(0, 25)}...`
+                      : isTabNameTruncated
+                        ? `${cellValue.slice(0, 15)}...`
+                        : cellValue;
 
                                   return (
                                     <td
                                       key={`${row.id}-${column.key}`}
-                                      className="px-4 py-3 align-top text-sm text-white/86"
+                                      className={`px-4 py-3 align-top text-sm text-white/86 ${
+                                        column.key === "tab_name"
+                                          ? "w-[160px] min-w-[160px] max-w-[160px]"
+                                          : column.key === "full_name"
+                                            ? "w-[180px] min-w-[180px] max-w-[180px]"
+                                            : column.key === "email"
+                                              ? "w-[190px] min-w-[190px] max-w-[190px]"
+                                          : column.key === "phone_number"
+                                          ? "w-[140px] min-w-[140px] max-w-[140px]"
+                                          : column.key === "location"
+                                            ? "w-[150px] min-w-[150px] max-w-[150px]"
+                                            : column.key === "date"
+                                              ? "w-[140px] min-w-[140px] max-w-[140px]"
+                                              : ""
+                                      }`}
                                     >
                                       <div
                                         className={
                                           isEmail
-                                            ? `max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap ${
-                                                isTruncated ? "cursor-help" : ""
-                                              }`
+                                            ? isTableExpanded
+                                              ? "whitespace-normal break-all"
+                                              : `max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap ${
+                                                  isTruncated ? "cursor-help" : ""
+                                                }`
+                                            : column.key === "full_name"
+                                              ? "max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                            : isTabName
+                                              ? `max-w-[160px] overflow-hidden text-ellipsis whitespace-nowrap ${
+                                                  isTruncated ? "cursor-help" : ""
+                                                }`
+                                            : column.key === "phone_number"
+                                              ? "max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                              : column.key === "location"
+                                                ? "max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                                : column.key === "date"
+                                                  ? "max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap"
                                             : `max-w-[280px] whitespace-normal break-words ${
                                                 isTruncated ? "cursor-help" : ""
                                               }`
