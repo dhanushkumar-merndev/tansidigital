@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  LoaderCircle,
   Maximize2,
   Minimize2,
   Search,
@@ -145,6 +146,7 @@ function escapeCsvCell(value: string) {
 
 export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps) {
   const [isPending, startTransition] = useTransition();
+  const [isBrandPending, startBrandTransition] = useTransition();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -246,7 +248,11 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   }, [isTableExpanded]);
 
   function handleBrandChange(nextBrand: ConcreteBrand) {
-    startTransition(() => {
+    if (nextBrand === brand || isBrandPending) {
+      return;
+    }
+
+    startBrandTransition(() => {
       setBrand(nextBrand);
       const nextSearch = new URLSearchParams(searchParams.toString());
       nextSearch.set("brand", nextBrand);
@@ -347,12 +353,12 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
     ? `fixed inset-0 z-50 flex h-screen w-screen flex-col overflow-hidden border border-white/12 ${expandedTablePanelBg} shadow-[0_24px_80px_rgba(0,0,0,0.45)]`
     : "";
   const tableScrollClasses = isTableExpanded
-    ? "min-h-0 flex-1 overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
-    : "max-h-[70vh] overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34";
+    ? "crm-touch-scroll min-h-0 flex-1 overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+    : "crm-touch-scroll max-h-[70vh] overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34";
 
   const tableMarkup = (
     <div
-      className={`overflow-hidden ${isTableExpanded ? "mx-auto my-4 w-[calc(100%-2rem)] rounded-[20px]" : "rounded-[18px]"} border border-white/10 ${
+      className={`crm-surface-radius overflow-hidden ${isTableExpanded ? "mx-auto my-4 w-[calc(100%-2rem)]" : ""} border border-white/10 ${
         isTableExpanded ? expandedTablePanelBg : tableContainerBg
       } ${
         isTableExpanded ? "flex min-h-0 flex-1 flex-col" : ""
@@ -494,9 +500,9 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
       <div
         className={`${
           isTableExpanded
-            ? "mx-auto mb-4 w-[calc(100%-2rem)] rounded-[20px]"
+            ? "mx-auto mb-4 w-[calc(100%-2rem)]"
             : "mt-4"
-        } flex flex-col gap-3 rounded-[22px] border border-white/10 bg-white/6 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between`}
+        } crm-surface-radius flex flex-col gap-3 border border-white/10 bg-white/6 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between`}
       >
         <span className="text-sm text-center text-white/58">
           Showing {(safeCurrentPage - 1) * rowsPerPage + 1}–{Math.min(safeCurrentPage * rowsPerPage, rows.length)} of {rows.length} leads
@@ -558,7 +564,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
       ) : null}
       <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+          <section className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
             <div className="flex flex-col gap-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -593,18 +599,21 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                 <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                   {leadBrandOptions.map((option) => {
                     const selected = option === brand;
+                    const loading = isBrandPending && selected;
 
                     return (
                       <Button
                         key={option}
                         variant="ghost"
+                        aria-busy={loading}
                         className={
                           selected
-                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
-                            : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
+                            ? "min-w-[80px] gap-2 sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
+                            : "min-w-[80px] gap-2 sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
                       >
+                        {loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
                         {BRAND_CONFIG[option].label}
                       </Button>
                     );
@@ -620,7 +629,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   <p className="mt-0.5 text-sm text-white/58">
                     {selectedCampaigns.length === 0
                       ? "Showing all campaigns"
-                      : `Filtered by: ${selectedCampaigns.join(", ")}`}
+                      : "Campaign filters applied"}
                   </p>
                 </div>
 
@@ -701,7 +710,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
               <div className="mb-1 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                 <div
                   ref={campaignScrollRef}
-                  className="min-w-0 flex-1 cursor-grab overflow-x-auto pb-0.5 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+                  className="crm-touch-scroll min-w-0 flex-1 cursor-grab overflow-x-auto pb-0.5 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
                   onClickCapture={handleCampaignClickCapture}
                   onPointerDown={handleCampaignPointerDown}
                   onPointerMove={handleCampaignPointerMove}

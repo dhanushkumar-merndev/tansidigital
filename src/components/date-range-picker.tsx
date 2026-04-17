@@ -12,6 +12,39 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { type Brand } from "@/lib/brands";
 import React from "react";
 
+const APRIL_START = new Date(new Date().getFullYear(), 3, 1);
+
+function clampDateRange(date: DateRange | undefined): DateRange | undefined {
+  if (!date) {
+    return undefined;
+  }
+
+  const from = date.from
+    ? date.from < APRIL_START
+      ? APRIL_START
+      : date.from
+    : undefined;
+  const to = date.to
+    ? date.to < APRIL_START
+      ? APRIL_START
+      : date.to
+    : undefined;
+
+  if (!from && !to) {
+    return undefined;
+  }
+
+  if (!from && to) {
+    return { from: APRIL_START, to };
+  }
+
+  if (from && to && to < from) {
+    return { from, to: from };
+  }
+
+  return { from, to };
+}
+
 type DateRangePickerProps = {
   date: DateRange | undefined;
   onSelect: (date: DateRange | undefined) => void;
@@ -29,15 +62,16 @@ export function DateRangePicker({
   closeOnApply = true,
   showLabel = true,
 }: DateRangePickerProps) {
+  const clampedDate = React.useMemo(() => clampDateRange(date), [date]);
   const [open, setOpen] = React.useState(false);
-  const [draftDate, setDraftDate] = React.useState<DateRange | undefined>(date);
+  const [draftDate, setDraftDate] = React.useState<DateRange | undefined>(clampedDate);
   const [numberOfMonths, setNumberOfMonths] = React.useState(2);
 
   React.useEffect(() => {
     if (!open) {
-      setDraftDate(date);
+      setDraftDate(clampedDate);
     }
-  }, [date, open]);
+  }, [clampedDate, open]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -55,7 +89,7 @@ export function DateRangePicker({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen) {
-      setDraftDate(date);
+      setDraftDate(clampedDate);
     }
 
     setOpen(nextOpen);
@@ -66,7 +100,7 @@ export function DateRangePicker({
   }
 
   function handleApply() {
-    onSelect(draftDate);
+    onSelect(clampDateRange(draftDate));
     if (closeOnApply) {
       setOpen(false);
     }
@@ -90,13 +124,13 @@ export function DateRangePicker({
           >
             <CalendarIcon className="h-4 w-4 text-white/72" />
             <div className="mt-1 ml-2">
-            {date?.from ? (
-              date.to ? (
+            {clampedDate?.from ? (
+              clampedDate.to ? (
                 <>
-                  {format(date.from, "LLL dd, y")} - {format(date.to, "LLL dd, y")}
+                  {format(clampedDate.from, "LLL dd, y")} - {format(clampedDate.to, "LLL dd, y")}
                 </>
               ) : (
-                format(date.from, "LLL dd, y")
+                format(clampedDate.from, "LLL dd, y")
               )
             ) : (
               <span className="text-white/60">Pick a date range</span>
@@ -121,10 +155,13 @@ export function DateRangePicker({
           >
             <Calendar
               mode="range"
-              defaultMonth={draftDate?.from ?? date?.from}
+              defaultMonth={draftDate?.from ?? clampedDate?.from ?? APRIL_START}
               selected={draftDate}
               onSelect={setDraftDate}
               numberOfMonths={numberOfMonths}
+              showOutsideDays={false}
+              startMonth={APRIL_START}
+              disabled={{ before: APRIL_START }}
             />
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/14 bg-black/8 px-4 py-3">
               <div className="flex items-center gap-2">

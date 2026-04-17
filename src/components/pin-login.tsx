@@ -14,6 +14,9 @@ const KEYPAD_ROWS = [
   ["delete", "0", "submit"],
 ] as const;
 
+const PIN_LOGIN_ROUNDED_CLASS = "rounded-[28px]";
+const PIN_HEAVY_HAPTIC_PRESET = "heavy";
+
 type PinLoginProps = {
   length?: number;
   title?: string;
@@ -31,13 +34,13 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
 
   async function submitPin() {
     if (pin.length !== length || isSubmitting) {
-      await trigger("warning");
+      await trigger(PIN_HEAVY_HAPTIC_PRESET);
       return;
     }
 
     setIsSubmitting(true);
     setError("");
-    await trigger("heavy");
+    await trigger(PIN_HEAVY_HAPTIC_PRESET);
 
     const response = await fetch("/api/auth/login", {
       method: "POST",
@@ -51,12 +54,12 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
       setPin("");
       setIsSubmitting(false);
       setError("Wrong PIN. Try again.");
-      await trigger("error");
+      await trigger(PIN_HEAVY_HAPTIC_PRESET);
       return;
     }
 
-    await trigger("success");
-    await trigger("heavy"); // Double tap feeling for success
+    await trigger(PIN_HEAVY_HAPTIC_PRESET);
+    await trigger(PIN_HEAVY_HAPTIC_PRESET); // Double tap feeling for success
     startTransition(() => {
       router.refresh();
     });
@@ -66,8 +69,12 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
     if (isSubmitting || !value) return;
 
     if (value === "delete") {
+      if (pin.length === 0) {
+        return;
+      }
+
       setPin((current) => current.slice(0, -1));
-      await trigger("soft");
+      await trigger(PIN_HEAVY_HAPTIC_PRESET);
       return;
     }
 
@@ -76,40 +83,41 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
       return;
     }
 
+    if (pin.length >= length) {
+      return;
+    }
+
     setError("");
 
     setPin((current) => {
-      if (current.length >= length) {
-        return current;
-      }
-
       return `${current}${value}`;
     });
 
-    await trigger("selection");
+    await trigger(PIN_HEAVY_HAPTIC_PRESET);
+    
   }
 
   return (
-    <div className="relative isolate min-h-dvh overflow-hidden bg-[#0D4D8B] transition-[background-color] duration-500 ease-out">
+    <div className="relative isolate h-dvh overflow-hidden bg-[#0D4D8B] transition-[background-color] duration-500 ease-out">
       <motion.div
-        className="absolute -left-10 top-24 h-40 w-40 rounded-full bg-white/10 blur-3xl"
+        className="crm-gpu-animated absolute -left-10 top-24 h-40 w-40 rounded-full bg-white/10 blur-3xl"
         animate={{ y: [0, 22, 0] }}
         transition={{ duration: 8, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
       />
       <motion.div
-        className="absolute -right-8 bottom-10 h-48 w-48 rounded-full bg-[#ff8f99]/18 blur-3xl"
+        className="crm-gpu-animated absolute -right-8 bottom-10 h-48 w-48 rounded-full bg-[#ff8f99]/18 blur-3xl"
         animate={{ y: [0, -20, 0] }}
         transition={{ duration: 9, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
       />
 
-      <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-10">
+      <div className="crm-touch-scroll relative z-10 flex h-full items-center justify-center overflow-y-auto px-5 py-4 sm:px-6 sm:py-6">
         <motion.div
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-[380px] rounded-[34px] border border-white/14 bg-white/10 p-6 text-white shadow-[0_30px_120px_rgba(0,0,0,0.32)] backdrop-blur-2xl"
+          className={`crm-gpu-layer ${PIN_LOGIN_ROUNDED_CLASS} flex w-full max-w-[380px] flex-col justify-center border border-white/12 bg-white/6 px-4 py-5 text-white backdrop-blur-xl sm:px-5 sm:py-6`}
         >
           <div className="mb-8 text-center">
-            <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/16 bg-white/14">
+            <div className={`${PIN_LOGIN_ROUNDED_CLASS} mb-3 inline-flex h-12 w-12 items-center justify-center border border-white/16 bg-white/14`}>
               <LockKeyhole className="h-5 w-5" />
             </div>
             <h1 className="text-2xl font-semibold tracking-[0.01em]">{title}</h1>
@@ -138,7 +146,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                       repeat: Infinity,
                       ease: "easeInOut",
                     }}
-                    className="mb-6 flex h-16 w-16 items-center justify-center rounded-3xl border border-white/20 bg-white/10"
+                    className={`${PIN_LOGIN_ROUNDED_CLASS} mb-6 flex h-16 w-16 items-center justify-center border border-white/20 bg-white/10`}
                   >
                     <LockKeyhole className="h-8 w-8 text-white" />
                   </motion.div>
@@ -170,7 +178,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                 >
-                  <div className="mb-8 rounded-[28px] border border-white/12 bg-white/8 px-5 py-6">
+                  <div className={`${PIN_LOGIN_ROUNDED_CLASS} mb-8 border border-white/12 bg-white/8 px-5 py-6`}>
                     <div className="mb-3 flex items-center justify-center gap-4">
                       {Array.from({ length }).map((_, index) => {
                         const filled = index < pin.length;
@@ -210,7 +218,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                             key={cellKey}
                             type="button"
                             onClick={() => handlePress(key)}
-                            className="flex h-[76px] w-full items-center justify-center rounded-[28px] border border-white/14 bg-white/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] backdrop-blur-xl transition hover:bg-white/18"
+                            className={`${PIN_LOGIN_ROUNDED_CLASS} flex h-[76px] w-full items-center justify-center border border-white/14 bg-white/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] backdrop-blur-xl transition hover:bg-white/18`}
                             aria-label={
                               isDelete ? "Delete digit" : isSubmit ? "Submit PIN" : `Enter ${key}`
                             }

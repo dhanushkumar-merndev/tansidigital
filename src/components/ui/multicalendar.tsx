@@ -14,10 +14,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 
+const APRIL_START = new Date(new Date().getFullYear(), 3, 1)
+
 export function DatePickerWithRange() {
   const [date, setDate] = React.useState<DateRange | undefined>({
-    from: new Date(new Date().getFullYear(), 0, 20),
-    to: addDays(new Date(new Date().getFullYear(), 0, 20), 20),
+    from: APRIL_START,
+    to: addDays(APRIL_START, 20),
   })
 
   return (
@@ -48,10 +50,13 @@ export function DatePickerWithRange() {
         <PopoverContent className="w-auto p-0" align="start">
           <Calendar
             mode="range"
-            defaultMonth={date?.from}
+            defaultMonth={APRIL_START}
             selected={date}
             onSelect={setDate}
             numberOfMonths={2}
+            showOutsideDays={false}
+            startMonth={APRIL_START}
+            disabled={{ before: APRIL_START }}
           />
         </PopoverContent>
       </Popover>
@@ -59,4 +64,3 @@ export function DatePickerWithRange() {
   )
 }
 export { Calendar }
-

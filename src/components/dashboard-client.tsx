@@ -1,6 +1,6 @@
 "use client";
 
-import { endOfDay, isAfter, isBefore, startOfDay, subDays } from "date-fns";
+import { endOfDay, isAfter, isBefore, startOfDay } from "date-fns";
 import {
   Bar,
   BarChart,
@@ -24,7 +24,9 @@ import {
   IndianRupee,
   KeyRound,
   Layers3,
+  LoaderCircle,
   LogOut,
+  RefreshCw,
   Search,
   Sparkles,
   Target,
@@ -86,6 +88,7 @@ type MetaSpendSummary = {
 };
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
+const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
 
 type FilterSelectProps = {
   id: string;
@@ -123,7 +126,7 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
           align="start"
           className="w-[var(--radix-popover-trigger-width)] rounded-[22px] border border-white/24 bg-white/12 p-2 text-white shadow-[0_20px_60px_rgba(15,5,7,0.2)] ring-0 backdrop-blur-2xl"
         >
-          <div className="max-h-[280px] space-y-1 overflow-y-auto pr-1 [scrollbar-color:rgba(255,255,255,0.32)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/28 hover:[&::-webkit-scrollbar-thumb]:bg-white/40">
+          <div className="crm-touch-scroll max-h-[280px] space-y-1 overflow-y-auto pr-1 [scrollbar-color:rgba(255,255,255,0.32)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/28 hover:[&::-webkit-scrollbar-thumb]:bg-white/40">
             {options.map((option) => {
               const active = option.value === value;
 
@@ -528,6 +531,16 @@ function formatChartLocationLabel(value: string) {
     .join(" ");
 }
 
+function formatCampaignAxisLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Unknown";
+
+  const words = trimmed.match(/[A-Za-z0-9]+/g) ?? [];
+  if (words.length === 0) return trimmed;
+
+  return words.map((word) => word.charAt(0).toUpperCase()).join("");
+}
+
 function summarizeRows(rows: DashboardRow[]): Summary {
   const totalLeads = rows.length;
   const uniquePhones = getUniquePhoneCampaignCount(rows);
@@ -580,6 +593,7 @@ manifest.href = `/brand-manifest?brand=${brand}`;
 
 export function DashboardClient({ workbook, initialBrand }: DashboardClientProps) {
   const [isPending, startTransition] = useTransition();
+  const [isBrandPending, startBrandTransition] = useTransition();
   const [isMounted, setIsMounted] = React.useState(false);
   const [isDesktop, setIsDesktop] = React.useState(false);
 
@@ -618,6 +632,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const [digitalPin, setDigitalPin] = React.useState("");
   const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
   const [isDigitalLoading, setIsDigitalLoading] = React.useState(false);
+  const [isWorkbookRefreshing, setIsWorkbookRefreshing] = React.useState(false);
   const [digitalError, setDigitalError] = React.useState<string | null>(null);
 
   // Lock scroll when digital modal is open
@@ -640,7 +655,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const [metaSpendError, setMetaSpendError] = React.useState<string | null>(null);
   const [isMetaSpendLoading, setIsMetaSpendLoading] = React.useState(false);
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
-    from: subDays(new Date(), 30),
+    from: DASHBOARD_RANGE_START,
     to: new Date(),
   });
 
@@ -671,7 +686,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const brandRows = React.useMemo(
     () =>
       workbook.rows.filter((row) => {
-        if (brand === "all") return true;
+        if (brand === "all") return row.brand !== "unknown";
         return row.brand === brand;
       }),
     [brand, workbook.rows],
@@ -1167,6 +1182,41 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     }
   }
 
+  async function handleWorkbookRefresh() {
+    if (isWorkbookRefreshing) {
+      return;
+    }
+
+    setIsWorkbookRefreshing(true);
+    setDigitalError("");
+    setDigitalSuccessMessage("");
+
+    try {
+      const response = await fetch("/api/workbook/refresh", { method: "POST" });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Unable to refresh workbook data right now.");
+      }
+
+      setDigitalSuccessMessage("Workbook data refreshed from Google Sheets.");
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setDigitalError(
+        error instanceof Error ? error.message : "Unable to refresh workbook data right now.",
+      );
+    } finally {
+      setIsWorkbookRefreshing(false);
+    }
+  }
+
   function openDigitalModal() {
     setIsDigitalModalOpen(true);
     setDigitalError("");
@@ -1180,7 +1230,11 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   }
 
   function handleBrandChange(nextBrand: Brand) {
-    startTransition(() => {
+    if (nextBrand === brand || isBrandPending) {
+      return;
+    }
+
+    startBrandTransition(() => {
       setBrand(nextBrand);
       const nextSearch = new URLSearchParams(searchParams.toString());
       nextSearch.set("brand", nextBrand);
@@ -1195,8 +1249,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const activeBrandAssets = getBrandAssets(brand);
   const leadsPageHref = `/leads?brand=${brand === "all" ? "bigwing" : brand}`;
   const dashboardBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
-  const redwingLocationAxisWidth = isDesktop ? 118 : 100;
+  const redwingLocationAxisWidth = isDesktop ? 118 : 80;
   const redwingLocationAxisFontSize = isDesktop ? 14 : 10;
+  const redwingLocationChartMargin = isDesktop ? { left: 0, right: 0 } : { left: -12, right: 0 };
 
   return (
     <div
@@ -1205,7 +1260,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     >
       <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-8 px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <section className="relative rounded-[24px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+          <section className="relative crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
@@ -1229,18 +1284,21 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   {brandOptions.map((option) => {
                     const selected = option === brand;
                     const label = option === "all" ? "All" : BRAND_CONFIG[option].label;
+                    const loading = isBrandPending && selected;
 
                     return (
                       <Button
                         key={option}
                         variant="ghost"
+                        aria-busy={loading}
                         className={
                           selected
-                            ? "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
-                            : "min-w-[80px] sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
+                            ? "min-w-[80px] gap-2 sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
+                            : "min-w-[80px] gap-2 sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                         }
                         onClick={() => handleBrandChange(option)}
                       >
+                        {loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
                         {label}
                       </Button>
                     );
@@ -1275,7 +1333,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             </div>
           </section>
 
-          <section className="grid gap-3 sm:gap-4 rounded-[24px] border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
+          <section className="grid gap-3 sm:gap-4 crm-surface-radius border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
             <DateRangePicker date={dateRange} onSelect={setDateRange} brand={brand} />
 
             <FilterSelect
@@ -1290,14 +1348,14 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             <AdNameSearchInput id="ad-search" suggestions={adNameSuggestions} onSearchChange={setSearchFilter} />
           </section>
 
-          <section className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             {[
               { label: "Total Leads", value: formatCompactNumber(summary.totalLeads), hint: "Filtered lead rows", icon: Users },
               { label: "Unique Phones", value: formatCompactNumber(summary.uniquePhones), hint: "Distinct phone + campaign pairs", icon: Target },
               { label: "Campaigns", value: formatCompactNumber(summary.campaigns), hint: `${summary.tabs} active tabs`, icon: Layers3 },
               { label: "Cost Spent", value: spendCardValue, hint: spendCardHint, icon: IndianRupee },
             ].map((card) => (
-              <div key={card.label} className="rounded-[24px] border border-white/14 bg-white/10 p-3.5 sm:p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
+              <div key={card.label} className="crm-surface-radius border border-white/14 bg-white/10 p-3.5 sm:p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
                 <div className="mb-2 sm:mb-3 sm:mb-6 flex items-center justify-between">
                   <span className="text-[11px] sm:text-sm text-white/62 uppercase tracking-tight">{card.label}</span>
                   <div className="flex h-7 w-7 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-2xl border border-white/12 bg-white/10">
@@ -1311,7 +1369,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
           </section>
 
           <section className="grid gap-3 sm:gap-4 xl:grid-cols-[1.4fr_1fr]">
-            <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
               <div className="mb-3 sm:mb-6 flex items-start justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-semibold">Lead timeline</h2>
@@ -1371,7 +1429,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   </Button>
                 </div>
               </div>
-                <div className="h-[320px] min-w-0">
+                <div className="crm-gpu-layer h-[320px] min-w-0">
                   {isMounted ? (
                     <ResponsiveContainer id="timeline-chart" width="100%" height={320} minWidth={0} minHeight={0}>
                       <LineChart data={timelineData}>
@@ -1393,12 +1451,12 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                 </div>
             </div>
 
-            <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
               <div className="mb-3 sm:mb-6">
                 <h2 className="text-xl font-semibold">Platform mix</h2>
                 <p className="mt-1 text-sm text-white/58">Lead split by platform values from your sheet.</p>
               </div>
-                <div className="h-[320px] min-w-0">
+                <div className="crm-gpu-layer h-[320px] min-w-0">
                   {isMounted ? (
                     <ResponsiveContainer id="platform-chart" width="100%" height={320} minWidth={0} minHeight={0}>
                       <PieChart>
@@ -1427,17 +1485,23 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
           <section className="grid items-start gap-3 sm:gap-4 xl:grid-cols-[1.15fr_1fr]">
             <div className="grid gap-4">
-              <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                 <div className="mb-3 sm:mb-6">
                   <h2 className="text-xl font-semibold">Top campaigns</h2>
                   <p className="mt-1 text-sm text-white/58">Lead count by campaign name.</p>
                 </div>
-                <div className={(brand === "redwing" ? "h-[390px]" : "h-[330px]") + " min-w-0"}>
+                <div className={`crm-gpu-layer ${brand === "redwing" ? "h-[390px]" : "h-[330px]"} min-w-0`}>
                   {isMounted ? (
                     <ResponsiveContainer id="campaign-chart" width="100%" height={brand === "redwing" ? 390 : 330} minWidth={0} minHeight={0}>
                       <BarChart data={campaignData}>
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                        <XAxis dataKey="campaign" stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
+                        <XAxis
+                          dataKey="campaign"
+                          stroke="rgba(255,255,255,0.5)"
+                          interval={0}
+                          tick={{ fontSize: 10 }}
+                          tickFormatter={formatCampaignAxisLabel}
+                        />
                         <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
                         <Tooltip
                           content={<GlassMetricTooltip labelHeading="Campaign" activeBrand={brand} />}
@@ -1453,7 +1517,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               </div>
 
               {brand === "all" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-8">
                     <h2 className="text-xl font-semibold">Today Campaign Leads</h2>
                     <p className="mt-1 text-sm text-white/58">
@@ -1486,12 +1550,12 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
             <div className="grid gap-4">
               {brand !== "redwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-3 sm:mb-6">
                     <h2 className="text-xl font-semibold">Bigwing Yes / No</h2>
                     <p className="mt-1 text-sm text-white/58">Response count from the Bigwing whitefield / hoodi question.</p>
                   </div>
-                  <div className="h-[160px] min-w-0">
+                  <div className="crm-gpu-layer h-[160px] min-w-0">
                     {bigwingResponseData.length > 0 ? (
                       isMounted ? (
                         <ResponsiveContainer id="bigwing-chart" width="100%" height={160} minWidth={0} minHeight={0}>
@@ -1522,12 +1586,12 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "bigwing" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-5">
                     <h2 className="text-xl font-semibold">Redwing Locations</h2>
                     <p className="mt-1 text-sm text-white/58">Top Redwing location values from the filtered rows.</p>
                   </div>
-                  <div style={{ height: redwingLocationChartHeight }} className="min-w-0">
+                  <div style={{ height: redwingLocationChartHeight }} className="crm-gpu-layer min-w-0">
                     {redwingLocationData.length > 0 ? (
                       isMounted ? (
                         <ResponsiveContainer id="redwing-chart" width="100%" height={redwingLocationChartHeight} minWidth={0} minHeight={0}>
@@ -1535,6 +1599,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                             data={redwingLocationData}
                             layout="vertical"
                             barSize={brand === "redwing" ? 18 : 28}
+                            margin={redwingLocationChartMargin}
                           >
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
@@ -1565,7 +1630,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "all" ? (
-                <div className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
                   <div className="mb-3 sm:mb-6">
                     <h2 className="text-xl font-semibold">View all leads</h2>
                     <p className="mt-1 text-sm text-white/58">
@@ -1587,14 +1652,14 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
           </section>
 
           {brand === "redwing" ? (
-            <div className="   rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
               <div className="mb-3 sm:mb-6">
                 <h2 className="text-xl font-semibold">Digital performance</h2>
                 <p className="mt-1 text-sm text-white/58">
                   Trends for actual numbers, contacted, and interested leads over time.
                 </p>
               </div>
-              <div className="h-[340px] min-w-0">
+              <div className="crm-gpu-layer h-[340px] min-w-0">
                 {isMounted ? (
                   <ResponsiveContainer id="digital-performance-chart" width="100%" height={340}>
                     <LineChart data={filteredDigitalLeads}>
@@ -1648,7 +1713,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
           {isDigitalModalOpen ? (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-sm">
-              <div className="w-full max-w-lg rounded-[30px] border border-white/14 bg-[#103a64] p-8 shadow-[0_40px_120px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+              <div className="w-full max-w-lg crm-surface-radius border border-white/14 bg-[#103a64] p-8 shadow-[0_40px_120px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
@@ -1710,7 +1775,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="rounded-[24px] border border-white/12 bg-white/8 p-4">
+                    <div className="crm-surface-radius border border-white/12 bg-white/8 p-4">
                       <div className="mb-3 flex items-start justify-between gap-4">
                         <div>
                           <p className="text-[11px] uppercase tracking-[0.22em] text-white/52">Prompt</p>
@@ -1748,22 +1813,33 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       />
                     </Field>
 
-                    <div className="flex justify-end gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <Button
                         variant="ghost"
                         className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                        onClick={closeDigitalModal}
+                        onClick={handleWorkbookRefresh}
+                        disabled={isWorkbookRefreshing}
                       >
-                        Close
+                        <RefreshCw className={`h-4 w-4 ${isWorkbookRefreshing ? "animate-spin" : ""}`} />
+                        {isWorkbookRefreshing ? "Refreshing..." : "Refresh DATA"}
                       </Button>
-                      <Button
-                        variant="ghost"
-                        className="rounded-full border border-white/70 bg-white px-5 py-1 font-medium text-[#103a64] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#103a64]"
-                        onClick={handleDigitalImportSubmit}
-                        disabled={isDigitalLoading || digitalResponseText.trim().length === 0}
-                      >
-                        {isDigitalLoading ? "Appending..." : "Append to DATA"}
-                      </Button>
+                      <div className="flex justify-end gap-3">
+                        <Button
+                          variant="ghost"
+                          className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                          onClick={closeDigitalModal}
+                        >
+                          Close
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="rounded-full border border-white/70 bg-white px-5 py-1 font-medium text-[#103a64] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#103a64]"
+                          onClick={handleDigitalImportSubmit}
+                          disabled={isDigitalLoading || digitalResponseText.trim().length === 0}
+                        >
+                          {isDigitalLoading ? "Appending..." : "Append to DATA"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}

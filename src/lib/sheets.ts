@@ -823,6 +823,26 @@ async function refreshSnapshotByAppend(
   };
 }
 
+function clearWorkbookCacheState() {
+  _cachedData = null;
+  _cacheTimestamp = 0;
+  _inflightPromise = null;
+  _cachedCountSignature = "";
+  _cachedCountByTab = new Map();
+  _countCheckTimestamp = 0;
+  _countCheckPromise = null;
+}
+
+export async function refreshWorkbookData(): Promise<WorkbookData> {
+  clearWorkbookCacheState();
+
+  const data = await fetchWorkbookDataInternal();
+  _cachedData = data;
+  _cacheTimestamp = Date.now();
+
+  return data;
+}
+
 export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
   const now = Date.now();
   const cachedData = _cachedData;
