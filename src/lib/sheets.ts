@@ -17,6 +17,8 @@ export type LeadTableColumn = {
 type DataSheetConfig = {
   brandByTab: Map<string, ConcreteBrand>;
   leadTableColumns: LeadTableColumn[];
+  leadCountByTab: Map<string, number>;
+  leadCountSignature: string;
 };
 
 export type DashboardRow = {
@@ -200,10 +202,11 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
   const dataSheet = rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
   const brandByTab = new Map<string, ConcreteBrand>();
   const leadTableColumns: LeadTableColumn[] = [];
+  const leadCountByTab = new Map<string, number>();
   const seenColumns = new Set<string>();
 
   if (!dataSheet) {
-    return { brandByTab, leadTableColumns };
+    return { brandByTab, leadTableColumns, leadCountByTab, leadCountSignature: "" };
   }
 
   for (const row of dataSheet.rows) {
@@ -226,9 +229,15 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
     const tableColumnLabel =
       getFirstValue(row, ["table_label", "label", "display_name", "column_label"]) ||
       formatColumnLabel(tableColumnKey);
+    const rawLeadCount = getFirstValue(row, ["lead_count", "count", "row_count", "total_leads"]);
+    const leadCount = Number.parseInt(rawLeadCount, 10);
 
     if (tabName && brand) {
       addBrandMappingEntry(brandByTab, brand, tabName);
+
+      if (Number.isFinite(leadCount) && leadCount >= 0) {
+        leadCountByTab.set(expandAliases(tabName), leadCount);
+      }
 
       for (const alias of splitMappingValues(tabAliases)) {
         addBrandMappingEntry(brandByTab, brand, alias);
@@ -241,7 +250,12 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
     }
   }
 
-  return { brandByTab, leadTableColumns };
+  const leadCountSignature = Array.from(leadCountByTab.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([tabName, count]) => `${tabName}:${count}`)
+    .join("|");
+
+  return { brandByTab, leadTableColumns, leadCountByTab, leadCountSignature };
 }
 
 function normalizeRow(
@@ -398,10 +412,76 @@ async function fetchRawSheets(): Promise<RawSheet[]> {
 }
 
 /** In-memory TTL cache shared across all requests (30 seconds) */
-const CACHE_TTL_MS = 30_000;
+const CACHE_TTL_MS = 60_000;
+const COUNT_CHECK_TTL_MS = 10_000;
 let _cachedData: WorkbookData | null = null;
 let _cacheTimestamp = 0;
 let _inflightPromise: Promise<WorkbookData> | null = null;
+let _cachedCountSignature = "";
+let _countCheckTimestamp = 0;
+let _countCheckPromise: Promise<string> | null = null;
+
+async function fetchLeadCountSignature(): Promise<string> {
+  const spreadsheetId = getSpreadsheetId();
+  const sheets = await getSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${DATA_SHEET_TITLE}!A:E`,
+    majorDimension: "ROWS",
+  });
+
+  const rows = response.data.values ?? [];
+  const headerRow = rows[0] ?? [];
+  const headers = headerRow.map((header) => normalizeHeader(String(header)));
+  const tabNameIndex = headers.findIndex((header) =>
+    ["tab", "tab_name", "sheet", "sheet_name", "campaign_tab"].includes(header),
+  );
+  const leadCountIndex = headers.findIndex((header) =>
+    ["lead_count", "count", "row_count", "total_leads"].includes(header),
+  );
+
+  if (tabNameIndex === -1 || leadCountIndex === -1) {
+    return "";
+  }
+
+  const signatureEntries = rows
+    .slice(1)
+    .map((cells) => ({
+      tabName: expandAliases(String(cells[tabNameIndex] ?? "").trim()),
+      leadCount: Number.parseInt(String(cells[leadCountIndex] ?? "").trim(), 10),
+    }))
+    .filter((entry) => entry.tabName && Number.isFinite(entry.leadCount) && entry.leadCount >= 0)
+    .sort((left, right) => left.tabName.localeCompare(right.tabName))
+    .map((entry) => `${entry.tabName}:${entry.leadCount}`);
+
+  return signatureEntries.join("|");
+}
+
+async function getFreshLeadCountSignature(force = false): Promise<string> {
+  const now = Date.now();
+
+  if (!force && _cachedCountSignature && now - _countCheckTimestamp < COUNT_CHECK_TTL_MS) {
+    return _cachedCountSignature;
+  }
+
+  if (_countCheckPromise) {
+    return _countCheckPromise;
+  }
+
+  _countCheckPromise = fetchLeadCountSignature()
+    .then((signature) => {
+      _cachedCountSignature = signature;
+      _countCheckTimestamp = Date.now();
+      _countCheckPromise = null;
+      return signature;
+    })
+    .catch((error) => {
+      _countCheckPromise = null;
+      throw error;
+    });
+
+  return _countCheckPromise;
+}
 
 async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
   const spreadsheetId = process.env.SHEET_ID ?? "";
@@ -440,6 +520,8 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
     }
 
     const dataSheetConfig = extractDataSheetConfig(rawSheets);
+    _cachedCountSignature = dataSheetConfig.leadCountSignature;
+    _countCheckTimestamp = Date.now();
     const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
     const tabs = usableSheets.map((sheet) => expandAliases(sheet.title));
     const rows = usableSheets.flatMap((sheet) =>
@@ -474,10 +556,21 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
 
 export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
   const now = Date.now();
+  const cachedData = _cachedData;
 
   // Return cached data if still fresh
-  if (_cachedData && now - _cacheTimestamp < CACHE_TTL_MS) {
-    return _cachedData;
+  if (cachedData && now - _cacheTimestamp < CACHE_TTL_MS) {
+    try {
+      const latestSignature = await getFreshLeadCountSignature();
+      if (latestSignature === _cachedCountSignature) {
+        return cachedData;
+      }
+
+      _cachedData = null;
+      _cacheTimestamp = 0;
+    } catch {
+      return cachedData;
+    }
   }
 
   // If another request is already fetching, wait for it (dedup concurrent calls)

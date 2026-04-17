@@ -1,7 +1,18 @@
 "use client";
 
 import { endOfDay, parseISO, startOfDay } from "date-fns";
-import { ArrowDownWideNarrow, ArrowLeft, ArrowUpNarrowWide, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import {
+  ArrowDownWideNarrow,
+  ArrowLeft,
+  ArrowUpNarrowWide,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  Search,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -138,6 +149,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const campaignScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = React.useRef<HTMLDivElement | null>(null);
   const suppressChipClickRef = React.useRef(false);
   const dragStateRef = React.useRef<{
     pointerId: number;
@@ -152,6 +164,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const deferredSearch = React.useDeferredValue(searchTerm);
   const [sortDirection, setSortDirection] = React.useState<"desc" | "asc">("desc");
   const [currentPage, setCurrentPage] = React.useState(1);
+  const [isTableExpanded, setIsTableExpanded] = React.useState(false);
   const rowsPerPage = 50;
   const columns = FIXED_COLUMNS;
 
@@ -212,6 +225,25 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   React.useEffect(() => {
     setCurrentPage(1);
   }, [brand, selectedCampaigns, deferredSearch, dateRange, sortDirection]);
+
+  React.useEffect(() => {
+    if (!isTableExpanded) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousScrollX = window.scrollX;
+    const previousScrollY = window.scrollY;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    window.scrollTo({ top: previousScrollY, left: 0, behavior: "auto" });
+    tableScrollRef.current?.scrollTo({ top: 0, left: 0 });
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      window.scrollTo({ top: previousScrollY, left: previousScrollX, behavior: "auto" });
+    };
+  }, [isTableExpanded]);
 
   function handleBrandChange(nextBrand: ConcreteBrand) {
     startTransition(() => {
@@ -307,9 +339,156 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const leadsBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
   const tableContainerBg = brand === "bigwing" ? "bg-[#111111]/60" : "bg-[#0a2744]/50";
   const tableHeadBg = brand === "bigwing" ? "bg-[#1a1a1a]/92" : "bg-[#143d66]/92";
+  const expandedTablePanelBg = brand === "bigwing" ? "bg-[#101010]" : "bg-[#0a2744]";
+  const expandedContentShellClasses = isTableExpanded
+    ? "mx-auto flex h-full w-full max-w-[1800px] flex-col"
+    : "";
+  const tablePanelClasses = isTableExpanded
+    ? `fixed inset-0 z-50 flex h-screen w-screen flex-col overflow-hidden border border-white/12 ${expandedTablePanelBg} shadow-[0_24px_80px_rgba(0,0,0,0.45)]`
+    : "";
+  const tableScrollClasses = isTableExpanded
+    ? "min-h-0 flex-1 overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+    : "max-h-[70vh] overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34";
+
+  const tableMarkup = (
+    <div
+      className={`overflow-hidden ${isTableExpanded ? "mx-auto my-4 w-[calc(100%-2rem)] rounded-[20px]" : "rounded-[18px]"} border border-white/10 ${
+        isTableExpanded ? expandedTablePanelBg : tableContainerBg
+      } ${
+        isTableExpanded ? "flex min-h-0 flex-1 flex-col" : ""
+      }`}
+    >
+      <div ref={tableScrollRef} className={tableScrollClasses}>
+        <table className="w-full min-w-[900px] border-collapse text-left">
+          <thead className={`sticky top-0 z-10 ${tableHeadBg} backdrop-blur-xl`}>
+            <tr>
+              <th className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52">
+                Sl No
+              </th>
+              {columns.map((column) => (
+                <th
+                  key={column.key}
+                  className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52"
+                >
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {paginatedRows.length > 0 ? (
+              paginatedRows.map((row, rowIndex) => (
+                <tr key={row.id} className="border-b border-white/8 last:border-b-0">
+                  <td className="px-4 py-3 align-top text-sm tabular-nums text-white/52">
+                    {(safeCurrentPage - 1) * rowsPerPage + rowIndex + 1}
+                  </td>
+                  {columns.map((column) => {
+                    const cellValue = getLeadCellValue(row, column.key) || "-";
+                    const isEmail = column.key === "email";
+                    const isTruncated = isEmail && cellValue.length > 25;
+                    const displayValue = isTruncated ? `${cellValue.slice(0, 25)}...` : cellValue;
+
+                    return (
+                      <td
+                        key={`${row.id}-${column.key}`}
+                        className="px-4 py-3 align-top text-sm text-white/86"
+                      >
+                        <div
+                          className={`max-w-[280px] whitespace-normal break-words ${
+                            isTruncated ? "cursor-help" : ""
+                          }`}
+                          title={isTruncated ? cellValue : undefined}
+                        >
+                          {displayValue}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td
+                  colSpan={columns.length + 1}
+                  className="px-4 py-10 text-center text-sm text-white/58"
+                >
+                  No leads match the current search.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const paginationMarkup =
+    totalPages > 1 ? (
+      <div
+        className={`${
+          isTableExpanded
+            ? "mx-auto mb-4 w-[calc(100%-2rem)] rounded-[20px]"
+            : "mt-4"
+        } flex items-center justify-between rounded-[22px] border border-white/10 bg-white/6 px-5 py-3`}
+      >
+        <span className="text-sm text-white/58">
+          Showing {(safeCurrentPage - 1) * rowsPerPage + 1}–{Math.min(safeCurrentPage * rowsPerPage, rows.length)} of {rows.length} leads
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
+            disabled={safeCurrentPage <= 1}
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Prev
+          </Button>
+          <span className="min-w-[80px] text-center text-sm font-medium text-white tabular-nums">
+            {safeCurrentPage} / {totalPages}
+          </span>
+          <Button
+            variant="ghost"
+            className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
+            disabled={safeCurrentPage >= totalPages}
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Next
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div className="min-h-screen text-white transition-[background-color] duration-500 ease-out" style={{ backgroundColor: leadsBackground }}>
+      {isTableExpanded ? (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/60" />
+          <div className={tablePanelClasses}>
+            <div className={expandedContentShellClasses}>
+              <div className="flex rounded-b-[20px] px-5 items-center justify-between border-b border-white/10 bg-white/6 px-4 py-3 backdrop-blur-xl">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Leads table</h3>
+                  <p className="text-xs text-white/58">
+                    Showing {(safeCurrentPage - 1) * rowsPerPage + 1}–{Math.min(safeCurrentPage * rowsPerPage, rows.length)} of {rows.length} leads
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  className="h-9 gap-2 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white"
+                  onClick={() => setIsTableExpanded(false)}
+                >
+                  <Minimize2 className="h-3.5 w-3.5" />
+                  Close
+                </Button>
+              </div>
+              {tableMarkup}
+              {paginationMarkup}
+            </div>
+          </div>
+        </>
+      ) : null}
       <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
           <section className="rounded-[34px] border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
@@ -366,7 +545,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                 </div>
               </div>
            
-              <div className="mb-3 grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-end">
+              <div className="mb-2 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-end">
                 <div className="lg:pb-1">
                   <div className="flex items-center gap-3">
                     <h2 className="text-3xl font-semibold leading-tight">Lead table</h2>
@@ -380,8 +559,8 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
 
                 <div className="min-w-0">
                   <Field>
-                    <FieldLabel htmlFor="lead-search">Search Leads & Filter</FieldLabel>
-                    <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_260px_auto_auto] lg:items-end">
+                    <FieldLabel htmlFor="lead-search ">Search Leads & Filter</FieldLabel>
+                    <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_260px] lg:items-end">
                       <div className="relative h-[48px] w-full min-w-0 rounded-[22px] border border-white/16 bg-white/10">
                         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
                         <input
@@ -402,25 +581,6 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                             <X className="h-3.5 w-3.5" />
                           </button>
                         ) : null}
-                      </div>
-                      <div className="w-full min-w-0">
-                        <DateRangePicker
-                          date={dateRange}
-                          onSelect={setDateRange}
-                          brand={brand}
-                          closeOnApply={false}
-                          footerAction={
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              className="rounded-xl px-4 text-[#fff] hover:bg-white/10 hover:text-[#fff] disabled:opacity-40"
-                              onClick={handleDownloadCurrentView}
-                              disabled={rows.length === 0}
-                            >
-                              Download CSV
-                            </Button>
-                          }
-                        />
                       </div>
                       <Button
                         variant="ghost"
@@ -444,145 +604,91 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                         <ArrowUpNarrowWide className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                         ASC
                       </Button>
+                      <div className="w-full min-w-0">
+                        <DateRangePicker
+                          date={dateRange}
+                          onSelect={setDateRange}
+                          brand={brand}
+                          closeOnApply={false}
+                          footerAction={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="rounded-xl px-4 text-[#fff] hover:bg-white/10 hover:text-[#fff] disabled:opacity-40"
+                              onClick={handleDownloadCurrentView}
+                              disabled={rows.length === 0}
+                            >
+                              Download CSV
+                            </Button>
+                          }
+                        />
+                      </div>
                     </div>
                   </Field>
                 </div>
               </div>
 
-            <div
-              ref={campaignScrollRef}
-              className="mb-3 cursor-grab overflow-x-auto pb-1 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
-              onClickCapture={handleCampaignClickCapture}
-              onPointerDown={handleCampaignPointerDown}
-              onPointerMove={handleCampaignPointerMove}
-              onPointerUp={handleCampaignPointerEnd}
-              onPointerCancel={handleCampaignPointerEnd}
-              onWheel={handleCampaignWheel}
-            >
-              <div className="flex w-max min-w-full gap-2 pb-2">
-                <Button
-                  variant="ghost"
-                  className={
-                    selectedCampaigns.length === 0
-                      ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
-                      : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
-                  }
-                  onClick={() => setSelectedCampaigns([])}
+              <div className="mb-1 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div
+                  ref={campaignScrollRef}
+                  className="min-w-0 flex-1 cursor-grab overflow-x-auto pb-1 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+                  onClickCapture={handleCampaignClickCapture}
+                  onPointerDown={handleCampaignPointerDown}
+                  onPointerMove={handleCampaignPointerMove}
+                  onPointerUp={handleCampaignPointerEnd}
+                  onPointerCancel={handleCampaignPointerEnd}
+                  onWheel={handleCampaignWheel}
                 >
-                  All campaigns
-                </Button>
-                {campaignOptions.map((campaign) => {
-                  const selected = selectedCampaigns.includes(campaign);
-
-                  return (
+                  <div className="flex w-max min-w-full gap-2 pb-2">
                     <Button
-                      key={campaign}
                       variant="ghost"
                       className={
-                        selected
+                        selectedCampaigns.length === 0
                           ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                           : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                       }
-                      onClick={() => toggleCampaign(campaign)}
+                      onClick={() => setSelectedCampaigns([])}
                     >
-                      {campaign}
+                      All campaigns
                     </Button>
-                  );
-                })}
-              </div>
-            </div>
+                    {campaignOptions.map((campaign) => {
+                      const selected = selectedCampaigns.includes(campaign);
 
-            <div className={`overflow-hidden rounded-[18px] border border-white/10 ${tableContainerBg}`}>
-              <div className="max-h-[70vh] overflow-auto pr-1 [scrollbar-color:rgba(255,255,255,0.24)_rgba(255,255,255,0.06)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/6 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[1px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-white/24 [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-white/34">
-                <table className="w-full min-w-[900px] border-collapse text-left">
-                  <thead className={`sticky top-0 z-10 ${tableHeadBg} backdrop-blur-xl`}>
-                    <tr>
-                      <th className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52">
-                        Sl No
-                      </th>
-                      {columns.map((column) => (
-                        <th
-                          key={column.key}
-                          className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52"
+                      return (
+                        <Button
+                          key={campaign}
+                          variant="ghost"
+                          className={
+                            selected
+                              ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
+                              : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
+                          }
+                          onClick={() => toggleCampaign(campaign)}
                         >
-                          {column.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedRows.length > 0 ? (
-                      paginatedRows.map((row, rowIndex) => (
-                        <tr key={row.id} className="border-b border-white/8 last:border-b-0">
-                          <td className="px-4 py-3 align-top text-sm tabular-nums text-white/52">
-                            {(safeCurrentPage - 1) * rowsPerPage + rowIndex + 1}
-                          </td>
-                          {columns.map((column) => {
-                            const cellValue = getLeadCellValue(row, column.key) || "-";
-                            const isEmail = column.key === "email";
-                            const isTruncated = isEmail && cellValue.length > 25;
-                            const displayValue = isTruncated ? `${cellValue.slice(0, 25)}...` : cellValue;
-
-                            return (
-                              <td key={`${row.id}-${column.key}`} className="px-4 py-3 align-top text-sm text-white/86">
-                                <div
-                                  className={`max-w-[280px] whitespace-normal break-words ${
-                                    isTruncated ? "cursor-help" : ""
-                                  }`}
-                                  title={isTruncated ? cellValue : undefined}
-                                >
-                                  {displayValue}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))
+                          {campaign}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex justify-end lg:pb-2">
+                  <Button
+                    variant="ghost"
+                    className="h-9 gap-2 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white"
+                    onClick={() => setIsTableExpanded((current) => !current)}
+                  >
+                    {isTableExpanded ? (
+                      <Minimize2 className="h-3.5 w-3.5" />
                     ) : (
-                      <tr>
-                        <td
-                          colSpan={columns.length + 1}
-                          className="px-4 py-10 text-center text-sm text-white/58"
-                        >
-                          No leads match the current search.
-                        </td>
-                      </tr>
+                      <Maximize2 className="h-3.5 w-3.5" />
                     )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {totalPages > 1 ? (
-              <div className="mt-4 flex items-center justify-between rounded-[22px] border border-white/10 bg-white/6 px-5 py-3">
-                <span className="text-sm text-white/58">
-                  Showing {(safeCurrentPage - 1) * rowsPerPage + 1}–{Math.min(safeCurrentPage * rowsPerPage, rows.length)} of {rows.length} leads
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
-                    disabled={safeCurrentPage <= 1}
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                    Prev
-                  </Button>
-                  <span className="min-w-[80px] text-center text-sm font-medium text-white tabular-nums">
-                    {safeCurrentPage} / {totalPages}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
-                    disabled={safeCurrentPage >= totalPages}
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    Next
-                    <ChevronRight className="h-3.5 w-3.5" />
+                    {isTableExpanded ? "Exit full screen" : "Expand table"}
                   </Button>
                 </div>
               </div>
-            ) : null}
+
+              {!isTableExpanded ? tableMarkup : null}
+              {!isTableExpanded ? paginationMarkup : null}
             </div>
           </section>
         </div>
