@@ -59,6 +59,10 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+html.lenis {
+  scroll-behavior: auto;
+}
+
 body {
   min-height: 100vh;
   font-family: var(--font-geist-sans), sans-serif;
@@ -222,6 +226,8 @@ svg:focus {
 
   .crm-touch-scroll {
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
   }
 }
 

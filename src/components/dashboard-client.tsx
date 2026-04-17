@@ -126,7 +126,12 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
           align="start"
           className="w-[var(--radix-popover-trigger-width)] rounded-[22px] border border-white/24 bg-white/12 p-2 text-white shadow-[0_20px_60px_rgba(15,5,7,0.2)] ring-0 backdrop-blur-2xl"
         >
-          <div className="crm-touch-scroll max-h-[280px] space-y-1 overflow-y-auto pr-1 [scrollbar-color:rgba(255,255,255,0.32)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/28 hover:[&::-webkit-scrollbar-thumb]:bg-white/40">
+          <div
+            className="crm-touch-scroll max-h-[280px] space-y-1 overflow-y-auto pr-1 [scrollbar-color:rgba(255,255,255,0.32)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/28 hover:[&::-webkit-scrollbar-thumb]:bg-white/40"
+            data-lenis-prevent
+            data-lenis-prevent-touch
+            data-lenis-prevent-wheel
+          >
             {options.map((option) => {
               const active = option.value === value;
 
@@ -900,7 +905,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
       return "No campaigns match the current filters.";
     }
 
-    return `${metaSpend.matchedCampaigns} matching campaign${metaSpend.matchedCampaigns === 1 ? "" : "s"} from Meta Insights`;
+    return `${metaSpend.matchedCampaigns} matching campaign${metaSpend.matchedCampaigns === 1 ? "" : "s"} from Meta`;
   }, [isMetaSpendLoading, metaSpend, metaSpendError]);
 
   const todayCampaignRows = React.useMemo(

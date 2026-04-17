@@ -1,4 +1,7 @@
+import "lenis/dist/lenis.css";
 import "./globals.css";
+
+import { LenisProvider } from "@/components/lenis-provider";
 
 export default function RootLayout({
   children,
@@ -12,7 +15,7 @@ export default function RootLayout({
       data-scroll-behavior="smooth"
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col">
-        {children}
+        <LenisProvider>{children}</LenisProvider>
       </body>
     </html>
   );

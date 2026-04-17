@@ -14,6 +14,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { ReactLenis, type LenisRef } from "lenis/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -151,7 +152,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const campaignScrollRef = React.useRef<HTMLDivElement | null>(null);
-  const tableScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const tableScrollRef = React.useRef<LenisRef | null>(null);
   const suppressChipClickRef = React.useRef(false);
   const dragStateRef = React.useRef<{
     pointerId: number;
@@ -169,6 +170,11 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const [isTableExpanded, setIsTableExpanded] = React.useState(false);
   const rowsPerPage = 50;
   const columns = FIXED_COLUMNS;
+
+  const scrollTableToTop = React.useCallback(() => {
+    tableScrollRef.current?.lenis?.scrollTo(0, { immediate: true });
+    tableScrollRef.current?.wrapper?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, []);
 
   const updateMetadata = React.useEffectEvent((nextBrand: ConcreteBrand) => {
     syncBrandMetadata(nextBrand);
@@ -229,6 +235,10 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   }, [brand, selectedCampaigns, deferredSearch, dateRange, sortDirection]);
 
   React.useEffect(() => {
+    scrollTableToTop();
+  }, [safeCurrentPage, scrollTableToTop]);
+
+  React.useEffect(() => {
     if (!isTableExpanded) return;
 
     const previousOverflow = document.body.style.overflow;
@@ -238,14 +248,14 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
     window.scrollTo({ top: previousScrollY, left: 0, behavior: "auto" });
-    tableScrollRef.current?.scrollTo({ top: 0, left: 0 });
+    scrollTableToTop();
 
     return () => {
       document.body.style.overflow = previousOverflow;
       document.documentElement.style.overflow = previousHtmlOverflow;
       window.scrollTo({ top: previousScrollY, left: previousScrollX, behavior: "auto" });
     };
-  }, [isTableExpanded]);
+  }, [isTableExpanded, scrollTableToTop]);
 
   function handleBrandChange(nextBrand: ConcreteBrand) {
     if (nextBrand === brand || isBrandPending) {
@@ -364,7 +374,21 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
         isTableExpanded ? "flex min-h-0 flex-1 flex-col" : ""
       }`}
     >
-      <div ref={tableScrollRef} className={tableScrollClasses}>
+      <ReactLenis
+        ref={tableScrollRef}
+        className={tableScrollClasses}
+        options={{
+          autoRaf: true,
+          lerp: 0.12,
+          smoothWheel: true,
+          syncTouch: true,
+          syncTouchLerp: 0.08,
+          touchMultiplier: 1,
+          wheelMultiplier: 1,
+          overscroll: true,
+          stopInertiaOnNavigate: true,
+        }}
+      >
         <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
           <thead className={`sticky top-0 z-10 ${tableHeadBg} backdrop-blur-xl`}>
             <tr>
@@ -491,7 +515,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
             )}
           </tbody>
         </table>
-      </div>
+      </ReactLenis>
     </div>
   );
 
@@ -711,6 +735,9 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                 <div
                   ref={campaignScrollRef}
                   className="crm-touch-scroll min-w-0 flex-1 cursor-grab overflow-x-auto pb-0.5 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+                  data-lenis-prevent
+                  data-lenis-prevent-touch
+                  data-lenis-prevent-wheel
                   onClickCapture={handleCampaignClickCapture}
                   onPointerDown={handleCampaignPointerDown}
                   onPointerMove={handleCampaignPointerMove}
