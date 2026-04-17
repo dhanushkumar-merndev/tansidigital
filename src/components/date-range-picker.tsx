@@ -16,17 +16,40 @@ type DateRangePickerProps = {
   date: DateRange | undefined;
   onSelect: (date: DateRange | undefined) => void;
   brand: Brand;
+  footerAction?: React.ReactNode;
+  closeOnApply?: boolean;
 };
 
-export function DateRangePicker({ date, onSelect, brand }: DateRangePickerProps) {
+export function DateRangePicker({
+  date,
+  onSelect,
+  brand,
+  footerAction,
+  closeOnApply = true,
+}: DateRangePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [draftDate, setDraftDate] = React.useState<DateRange | undefined>(date);
+  const [numberOfMonths, setNumberOfMonths] = React.useState(2);
 
   React.useEffect(() => {
     if (!open) {
       setDraftDate(date);
     }
   }, [date, open]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+    const updateMonthCount = () => setNumberOfMonths(mediaQuery.matches ? 1 : 2);
+
+    updateMonthCount();
+    mediaQuery.addEventListener("change", updateMonthCount);
+
+    return () => {
+      mediaQuery.removeEventListener("change", updateMonthCount);
+    };
+  }, []);
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen) {
@@ -42,7 +65,9 @@ export function DateRangePicker({ date, onSelect, brand }: DateRangePickerProps)
 
   function handleApply() {
     onSelect(draftDate);
-    setOpen(false);
+    if (closeOnApply) {
+      setOpen(false);
+    }
   }
 
   const selectedColor = brand === "bigwing" ? "#ffffff" : "#0D4D8B";
@@ -97,17 +122,20 @@ export function DateRangePicker({ date, onSelect, brand }: DateRangePickerProps)
               defaultMonth={draftDate?.from ?? date?.from}
               selected={draftDate}
               onSelect={setDraftDate}
-              numberOfMonths={2}
+              numberOfMonths={numberOfMonths}
             />
-            <div className="flex items-center justify-between gap-4 border-t border-white/14 bg-black/8 px-4 py-3">
-              <Button
-                type="button"
-                variant="ghost"
-                className="rounded-xl px-4 text-[#fff] hover:bg-white/10 hover:text-[#fff]"
-                onClick={handleReset}
-              >
-                Reset
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/14 bg-black/8 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="rounded-xl px-4 text-[#fff] hover:bg-white/10 hover:text-[#fff]"
+                  onClick={handleReset}
+                >
+                  Reset
+                </Button>
+                {footerAction}
+              </div>
               <Button
                 type="button"
                 className="rounded-xl border px-5 shadow-none"

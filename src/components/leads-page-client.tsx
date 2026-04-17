@@ -1,11 +1,14 @@
 "use client";
 
+import { endOfDay, parseISO, startOfDay } from "date-fns";
 import { ArrowDownWideNarrow, ArrowLeft, ArrowUpNarrowWide, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 import { useTransition } from "react";
+import { type DateRange } from "react-day-picker";
 
+import { DateRangePicker } from "@/components/date-range-picker";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { BRAND_CONFIG, getBrandAssets, type ConcreteBrand } from "@/lib/brands";
@@ -115,6 +118,20 @@ function getSearchableText(row: DashboardRow, columns: LeadTableColumn[]) {
     .toLowerCase();
 }
 
+function sanitizeFileNameSegment(value: string) {
+  return value
+    .trim()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function escapeCsvCell(value: string) {
+  const normalized = value.replace(/\r?\n/g, " ").trim();
+  const escaped = normalized.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
 export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -131,6 +148,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const [brand, setBrand] = React.useState<ConcreteBrand>(initialBrand);
   const [selectedCampaigns, setSelectedCampaigns] = React.useState<string[]>([]);
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [dateRange, setDateRange] = React.useState<DateRange | undefined>();
   const deferredSearch = React.useDeferredValue(searchTerm);
   const [sortDirection, setSortDirection] = React.useState<"desc" | "asc">("desc");
   const [currentPage, setCurrentPage] = React.useState(1);
@@ -161,6 +179,20 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
       if (!deferredSearch) return true;
       return getSearchableText(row, columns).includes(deferredSearch.toLowerCase());
     })
+    .filter((row) => {
+      if (!dateRange?.from && !dateRange?.to) return true;
+      if (!row.date) return false;
+
+      const rowDate = parseISO(row.date);
+      if (Number.isNaN(rowDate.getTime())) return false;
+
+      const fromDate = dateRange.from ? startOfDay(dateRange.from) : null;
+      const toDate = dateRange.to ? endOfDay(dateRange.to) : null;
+
+      if (fromDate && rowDate < fromDate) return false;
+      if (toDate && rowDate > toDate) return false;
+      return true;
+    })
     .sort((a, b) => {
       const dateCompare = (a.date ?? "").localeCompare(b.date ?? "");
       if (dateCompare !== 0) {
@@ -179,7 +211,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   // Reset page when filters change
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [brand, selectedCampaigns, deferredSearch, sortDirection]);
+  }, [brand, selectedCampaigns, deferredSearch, dateRange, sortDirection]);
 
   function handleBrandChange(nextBrand: ConcreteBrand) {
     startTransition(() => {
@@ -245,6 +277,33 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
     suppressChipClickRef.current = false;
   }
 
+  function handleDownloadCurrentView() {
+    const exportColumns = columns.filter((column) => column.key !== "tab_name");
+    const headerLabels = ["Sl No", ...exportColumns.map((column) => column.label)];
+    const csvRows = rows.map((row, index) => [
+      String(index + 1),
+      ...exportColumns.map((column) => getLeadCellValue(row, column.key) || "-"),
+    ]);
+    const csv = [headerLabels, ...csvRows]
+      .map((line) => line.map((cell) => escapeCsvCell(cell)).join(","))
+      .join("\n");
+
+    const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const dateScope =
+      dateRange?.from || dateRange?.to
+        ? `${dateRange?.from ? dateRange.from.toISOString().slice(0, 10) : "start"}-to-${dateRange?.to ? dateRange.to.toISOString().slice(0, 10) : "end"}`
+        : "all-dates";
+
+    link.href = url;
+    link.download = `${sanitizeFileNameSegment(BRAND_CONFIG[brand].label)}-${dateScope}-leads.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   const leadsBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
   const tableContainerBg = brand === "bigwing" ? "bg-[#111111]/60" : "bg-[#0a2744]/50";
   const tableHeadBg = brand === "bigwing" ? "bg-[#1a1a1a]/92" : "bg-[#143d66]/92";
@@ -307,10 +366,10 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                 </div>
               </div>
            
-              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                <div>
+              <div className="mb-3 grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-end">
+                <div className="lg:pb-1">
                   <div className="flex items-center gap-3">
-                    <h2 className="text-3xl font-semibold">Lead table</h2>
+                    <h2 className="text-3xl font-semibold leading-tight">Lead table</h2>
                   </div>
                   <p className="mt-0.5 text-sm text-white/58">
                     {selectedCampaigns.length === 0
@@ -319,11 +378,11 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   </p>
                 </div>
 
-                <div className="w-full max-w-xl">
+                <div className="min-w-0">
                   <Field>
                     <FieldLabel htmlFor="lead-search">Search Leads & Filter</FieldLabel>
-                    <div className="flex items-center gap-2">
-                      <div className="relative h-[48px] flex-1 rounded-[22px] border border-white/16 bg-white/10">
+                    <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_260px_auto_auto] lg:items-end">
+                      <div className="relative h-[48px] w-full min-w-0 rounded-[22px] border border-white/16 bg-white/10">
                         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
                         <input
                           id="lead-search"
@@ -344,26 +403,45 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                           </button>
                         ) : null}
                       </div>
+                      <div className="w-full min-w-0">
+                        <DateRangePicker
+                          date={dateRange}
+                          onSelect={setDateRange}
+                          brand={brand}
+                          closeOnApply={false}
+                          footerAction={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="rounded-xl px-4 text-[#fff] hover:bg-white/10 hover:text-[#fff] disabled:opacity-40"
+                              onClick={handleDownloadCurrentView}
+                              disabled={rows.length === 0}
+                            >
+                              Download CSV
+                            </Button>
+                          }
+                        />
+                      </div>
                       <Button
                         variant="ghost"
                         className={sortDirection === "desc"
-                          ? "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/70 bg-white px-4 text-xs font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
-                          : "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/16 bg-white/10 px-4 text-xs text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white"
+                          ? "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/70 bg-white px-3 text-[11px] font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
+                          : "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/16 bg-white/10 px-3 text-[11px] text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
                         }
                         onClick={() => setSortDirection("desc")}
                       >
-                        <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                        <ArrowDownWideNarrow className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                         DESC
                       </Button>
                       <Button
                         variant="ghost"
                         className={sortDirection === "asc"
-                          ? "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/70 bg-white px-4 text-xs font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
-                          : "h-[48px] shrink-0 gap-1.5 rounded-[22px] border border-white/16 bg-white/10 px-4 text-xs text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white"
+                          ? "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/70 bg-white px-3 text-[11px] font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
+                          : "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/16 bg-white/10 px-3 text-[11px] text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
                         }
                         onClick={() => setSortDirection("asc")}
                       >
-                        <ArrowUpNarrowWide className="h-3.5 w-3.5" />
+                        <ArrowUpNarrowWide className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                         ASC
                       </Button>
                     </div>

@@ -502,6 +502,17 @@ function getLocationLabel(row: DashboardRow, brand: Brand) {
   return `${brandLabel} ${location}`;
 }
 
+function formatChartLocationLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "Unknown";
+
+  return trimmed
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function summarizeRows(rows: DashboardRow[]): Summary {
   const totalLeads = rows.length;
   const uniquePhones = getUniquePhoneCampaignCount(rows);
@@ -559,6 +570,7 @@ manifest.href = `/brand-manifest?brand=${brand}`;
 export function DashboardClient({ workbook, initialBrand }: DashboardClientProps) {
   const [isPending, startTransition] = useTransition();
   const [isMounted, setIsMounted] = React.useState(false);
+  const [isDesktop, setIsDesktop] = React.useState(false);
 
   React.useEffect(() => {
     // Increased delay to 300ms to ensure browser layout is fully stable on hard refresh
@@ -568,6 +580,20 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
       window.dispatchEvent(new Event("resize"));
     }, 300);
     return () => clearTimeout(timer);
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia("(min-width: 1024px)");
+    const updateIsDesktop = () => setIsDesktop(mediaQuery.matches);
+
+    updateIsDesktop();
+    mediaQuery.addEventListener("change", updateIsDesktop);
+
+    return () => {
+      mediaQuery.removeEventListener("change", updateIsDesktop);
+    };
   }, []);
 
   const router = useRouter();
@@ -857,7 +883,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
 
   const redwingLocationData = Array.from(redwingLocationMap.entries())
-    .map(([location, leads]) => ({ location, leads }))
+    .map(([location, leads]) => ({ location: formatChartLocationLabel(location), leads }))
     .sort((a, b) => b.leads - a.leads);
 
   const redwingLocationChartHeight = Math.max(
@@ -961,7 +987,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
       setDigitalSuccessMessage(`${data.count} row${data.count === 1 ? "" : "s"} appended to DATA.`);
       setDigitalResponseText("");
-      const refreshedMeta = await fetch("/api/digital-leads/session", {
+      const refreshedMeta = await fetch("/api/digital/session", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1006,9 +1032,15 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     });
   }
 
+  function handleOpenLeadsTable() {
+    startTransition(() => router.push(leadsPageHref));
+  }
+
   const activeBrandAssets = getBrandAssets(brand);
   const leadsPageHref = `/leads?brand=${brand === "all" ? "bigwing" : brand}`;
   const dashboardBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
+  const redwingLocationAxisWidth = isDesktop ? 118 : 100;
+  const redwingLocationAxisFontSize = isDesktop ? 14 : 10;
 
   return (
     <div
@@ -1176,7 +1208,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   <Button
                     variant="ghost"
                     className="shrink-0 rounded-full border border-white/12 bg-white/8 px-4 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                    onClick={() => startTransition(() => router.push(leadsPageHref))}
+                    onClick={handleOpenLeadsTable}
                     disabled={isPending}
                   >
                     {isPending ? "Loading..." : "Open leads"}
@@ -1350,7 +1382,14 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                           >
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
-                            <YAxis dataKey="location" type="category" width={100} stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
+                            <YAxis
+                              dataKey="location"
+                              type="category"
+                              width={redwingLocationAxisWidth}
+                              stroke="rgba(255,255,255,0.5)"
+                              interval={0}
+                              tick={{ fontSize: redwingLocationAxisFontSize }}
+                            />
                             <Tooltip
                               content={<GlassMetricTooltip labelHeading="Location" activeBrand={brand} />}
                               cursor={{ fill: chartHoverCursor }}
@@ -1380,9 +1419,10 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   <Button
                     variant="ghost"
                     className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                    onClick={() => router.push(`/leads?brand=${brand}`)}
+                    onClick={handleOpenLeadsTable}
+                    disabled={isPending}
                   >
-                    Open leads table
+                    {isPending ? "Loading..." : "Open leads table"}
                   </Button>
                 </div>
               ) : null}

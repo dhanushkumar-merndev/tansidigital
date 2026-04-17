@@ -119,6 +119,15 @@ function parseDateValue(value: string | undefined) {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
+  // Google Sheets may return date serials like "46128" for user-entered dates.
+  if (/^\d{5,}$/.test(trimmed)) {
+    const serial = Number(trimmed);
+    if (Number.isFinite(serial)) {
+      const utcTime = Date.UTC(1899, 11, 30) + serial * 24 * 60 * 60 * 1000;
+      return formatDateInIst(new Date(utcTime));
+    }
+  }
+
   const direct = new Date(trimmed);
   if (!Number.isNaN(direct.getTime())) {
     return formatDateInIst(direct);
@@ -663,7 +672,7 @@ export async function appendDigitalLeadImport(
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${DATA_SHEET_TITLE}!A:ZZ`,
-    valueInputOption: "USER_ENTERED",
+    valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
       values,
