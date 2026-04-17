@@ -17,7 +17,9 @@ type ImportBody = {
   };
 };
 
-function toEntry(entry: NonNullable<ImportBody["payload"]>["entries"][number]): DigitalLeadImportEntry {
+type ImportEntry = NonNullable<NonNullable<ImportBody["payload"]>["entries"]>[number];
+
+function toEntry(entry: ImportEntry): DigitalLeadImportEntry {
   if (typeof entry.date !== "string") {
     throw new Error("Each entry needs a valid date.");
   }
