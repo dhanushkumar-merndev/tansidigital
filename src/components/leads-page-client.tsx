@@ -371,16 +371,18 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   className={`border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52 ${
                     column.key === "tab_name"
                       ? "w-[160px] min-w-[160px] max-w-[160px]"
-                      : column.key === "full_name"
+                      : column.key === "campaign"
                         ? "w-[280px] min-w-[280px] max-w-[280px]"
+                      : column.key === "full_name"
+                        ? "w-[200px] min-w-[200px] max-w-[200px]"
                         : column.key === "email"
-                          ? "w-[350px] min-w-[350px] max-w-[350px]"
+                          ? "w-[260px] min-w-[260px] max-w-[260px]"
                       : column.key === "phone_number"
-                      ? "w-[160px] min-w-[160px] max-w-[160px]"
+                      ? "w-[140px] min-w-[140px] max-w-[140px]"
                       : column.key === "location"
-                        ? "w-[170px] min-w-[170px] max-w-[170px]"
+                        ? "w-[150px] min-w-[150px] max-w-[150px]"
                         : column.key === "date"
-                          ? "w-[160px] min-w-[160px] max-w-[160px]"
+                          ? "w-[140px] min-w-[140px] max-w-[140px]"
                           : ""
                   }`}
                 >
@@ -415,10 +417,12 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                                       className={`px-4 py-3 align-top text-sm text-white/86 ${
                                         column.key === "tab_name"
                                           ? "w-[160px] min-w-[160px] max-w-[160px]"
+                                          : column.key === "campaign"
+                                            ? "w-[280px] min-w-[280px] max-w-[280px]"
                                           : column.key === "full_name"
-                                            ? "w-[180px] min-w-[180px] max-w-[180px]"
+                                            ? "w-[200px] min-w-[200px] max-w-[200px]"
                                             : column.key === "email"
-                                              ? "w-[190px] min-w-[190px] max-w-[190px]"
+                                              ? "w-[260px] min-w-[260px] max-w-[260px]"
                                           : column.key === "phone_number"
                                           ? "w-[140px] min-w-[140px] max-w-[140px]"
                                           : column.key === "location"
@@ -432,12 +436,20 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                                         className={
                                           isEmail
                                             ? isTableExpanded
-                                              ? "whitespace-normal break-all"
+                                              ? "max-w-[260px] whitespace-normal break-all"
                                               : `max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap ${
                                                   isTruncated ? "cursor-help" : ""
                                                 }`
+                                            : column.key === "campaign"
+                                              ? isTableExpanded
+                                                ? "max-w-[280px] whitespace-normal break-words"
+                                                : `max-w-[280px] whitespace-normal break-words ${
+                                                    isTruncated ? "cursor-help" : ""
+                                                  }`
                                             : column.key === "full_name"
-                                              ? "max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap"
+                                              ? isTableExpanded
+                                                ? "max-w-[200px] whitespace-normal break-words"
+                                                : "max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap"
                                             : isTabName
                                               ? `max-w-[160px] overflow-hidden text-ellipsis whitespace-nowrap ${
                                                   isTruncated ? "cursor-help" : ""
