@@ -359,7 +359,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
       }`}
     >
       <div ref={tableScrollRef} className={tableScrollClasses}>
-        <table className="w-full min-w-[900px] border-collapse text-left">
+        <table className="w-full min-w-[900px] table-fixed border-collapse text-left">
           <thead className={`sticky top-0 z-10 ${tableHeadBg} backdrop-blur-xl`}>
             <tr>
               <th className="border-b border-white/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-white/52">
@@ -388,20 +388,26 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                     const isTruncated = isEmail && cellValue.length > 25;
                     const displayValue = isTruncated ? `${cellValue.slice(0, 25)}...` : cellValue;
 
-                    return (
-                      <td
-                        key={`${row.id}-${column.key}`}
-                        className="px-4 py-3 align-top text-sm text-white/86"
-                      >
-                        <div
-                          className={`max-w-[280px] whitespace-normal break-words ${
-                            isTruncated ? "cursor-help" : ""
-                          }`}
-                          title={isTruncated ? cellValue : undefined}
-                        >
-                          {displayValue}
-                        </div>
-                      </td>
+                                  return (
+                                    <td
+                                      key={`${row.id}-${column.key}`}
+                                      className="px-4 py-3 align-top text-sm text-white/86"
+                                    >
+                                      <div
+                                        className={
+                                          isEmail
+                                            ? `max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap ${
+                                                isTruncated ? "cursor-help" : ""
+                                              }`
+                                            : `max-w-[280px] whitespace-normal break-words ${
+                                                isTruncated ? "cursor-help" : ""
+                                              }`
+                                        }
+                                        title={isTruncated ? cellValue : undefined}
+                                      >
+                                        {displayValue}
+                                      </div>
+                                    </td>
                     );
                   })}
                 </tr>
@@ -429,12 +435,12 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
           isTableExpanded
             ? "mx-auto mb-4 w-[calc(100%-2rem)] rounded-[20px]"
             : "mt-4"
-        } flex items-center justify-between rounded-[22px] border border-white/10 bg-white/6 px-5 py-3`}
+        } flex flex-col gap-3 rounded-[22px] border border-white/10 bg-white/6 px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between`}
       >
-        <span className="text-sm text-white/58">
+        <span className="text-sm text-center text-white/58">
           Showing {(safeCurrentPage - 1) * rowsPerPage + 1}–{Math.min(safeCurrentPage * rowsPerPage, rows.length)} of {rows.length} leads
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full items-center justify-between gap-2 lg:w-auto lg:justify-end">
           <Button
             variant="ghost"
             className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
@@ -444,7 +450,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
             <ChevronLeft className="h-3.5 w-3.5" />
             Prev
           </Button>
-          <span className="min-w-[80px] text-center text-sm font-medium text-white tabular-nums">
+          <span className="min-w-[56px] text-center text-sm font-medium text-white tabular-nums sm:min-w-[80px]">
             {safeCurrentPage} / {totalPages}
           </span>
           <Button
@@ -545,7 +551,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                 </div>
               </div>
            
-              <div className="mb-2 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-end">
+              <div className="mb-2 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
                 <div className="lg:pb-1">
                   <div className="flex items-center gap-3">
                     <h2 className="text-3xl font-semibold leading-tight">Lead table</h2>
@@ -557,11 +563,13 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                   </p>
                 </div>
 
-                <div className="min-w-0">
-                  <Field>
-                    <FieldLabel htmlFor="lead-search ">Search Leads & Filter</FieldLabel>
-                    <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_260px] lg:items-end">
-                      <div className="relative h-[48px] w-full min-w-0 rounded-[22px] border border-white/16 bg-white/10">
+                <div className="min-w-0 self-start">
+                  <Field className="gap-0">
+                    <FieldLabel htmlFor="lead-search" className="mb-2 leading-none">
+                      Search Leads & Filter
+                    </FieldLabel>
+                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_260px] lg:items-start">
+                      <div className="relative col-span-2 h-[48px] w-full min-w-0 rounded-[22px] border border-white/16 bg-white/10 lg:col-span-1">
                         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
                         <input
                           id="lead-search"
@@ -604,12 +612,13 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
                         <ArrowUpNarrowWide className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                         ASC
                       </Button>
-                      <div className="w-full min-w-0">
+                      <div className="col-span-2 w-full min-w-0 lg:col-span-1">
                         <DateRangePicker
                           date={dateRange}
                           onSelect={setDateRange}
                           brand={brand}
                           closeOnApply={false}
+                          showLabel={false}
                           footerAction={
                             <Button
                               type="button"
@@ -631,7 +640,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
               <div className="mb-1 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                 <div
                   ref={campaignScrollRef}
-                  className="min-w-0 flex-1 cursor-grab overflow-x-auto pb-1 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
+                  className="min-w-0 flex-1 cursor-grab overflow-x-auto pb-0.5 active:cursor-grabbing [scrollbar-color:rgba(255,255,255,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/24 hover:[&::-webkit-scrollbar-thumb]:bg-white/34"
                   onClickCapture={handleCampaignClickCapture}
                   onPointerDown={handleCampaignPointerDown}
                   onPointerMove={handleCampaignPointerMove}

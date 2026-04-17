@@ -1,3 +1,5 @@
+import { promises as fs } from "fs";
+import path from "path";
 import { cache } from "react";
 
 import { type ConcreteBrand } from "@/lib/brands";
@@ -16,9 +18,29 @@ export type LeadTableColumn = {
 
 type DataSheetConfig = {
   brandByTab: Map<string, ConcreteBrand>;
+  canonicalTabByLookup: Map<string, string>;
   leadTableColumns: LeadTableColumn[];
   leadCountByTab: Map<string, number>;
   leadCountSignature: string;
+};
+
+type LeadCountState = {
+  countByTab: Map<string, number>;
+  signature: string;
+};
+
+type WorkbookSnapshot = {
+  version: 1;
+  generatedAt: string;
+  leadCountSignature: string;
+  leadCountByTab: Record<string, number>;
+  brandByTab: Record<string, ConcreteBrand>;
+  canonicalTabByLookup: Record<string, string>;
+  sheetTitleByTab: Record<string, string>;
+  tabs: string[];
+  rowsByTab: Record<string, DashboardRow[]>;
+  digitalLeads: DigitalLeadImportEntry[];
+  leadTableColumns: LeadTableColumn[];
 };
 
 export type DashboardRow = {
@@ -65,6 +87,8 @@ export type DigitalLeadImportMeta = {
 
 const DATA_SHEET_TITLE = "DATA";
 const DIGITAL_REPORT_TYPE = "redwing_digital_leads";
+const SNAPSHOT_DIR = path.join(process.cwd(), "data");
+const SNAPSHOT_PATH = path.join(SNAPSHOT_DIR, "workbook-snapshot.json");
 const DIGITAL_DATA_HEADERS = [
   "Report Type",
   "Report Brand",
@@ -190,6 +214,17 @@ function addBrandMappingEntry(
   brandByTab.set(normalizedValue, brand);
 }
 
+function addCanonicalTabEntry(
+  canonicalTabByLookup: Map<string, string>,
+  canonicalTabName: string,
+  value: string,
+) {
+  const normalizedValue = normalizeLookupKey(expandAliases(value));
+  if (!normalizedValue) return;
+
+  canonicalTabByLookup.set(normalizedValue, expandAliases(canonicalTabName));
+}
+
 function formatColumnLabel(value: string) {
   return value
     .split("_")
@@ -201,12 +236,13 @@ function formatColumnLabel(value: string) {
 function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
   const dataSheet = rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
   const brandByTab = new Map<string, ConcreteBrand>();
+  const canonicalTabByLookup = new Map<string, string>();
   const leadTableColumns: LeadTableColumn[] = [];
   const leadCountByTab = new Map<string, number>();
   const seenColumns = new Set<string>();
 
   if (!dataSheet) {
-    return { brandByTab, leadTableColumns, leadCountByTab, leadCountSignature: "" };
+    return { brandByTab, canonicalTabByLookup, leadTableColumns, leadCountByTab, leadCountSignature: "" };
   }
 
   for (const row of dataSheet.rows) {
@@ -234,6 +270,7 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
 
     if (tabName && brand) {
       addBrandMappingEntry(brandByTab, brand, tabName);
+      addCanonicalTabEntry(canonicalTabByLookup, tabName, tabName);
 
       if (Number.isFinite(leadCount) && leadCount >= 0) {
         leadCountByTab.set(expandAliases(tabName), leadCount);
@@ -241,6 +278,7 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
 
       for (const alias of splitMappingValues(tabAliases)) {
         addBrandMappingEntry(brandByTab, brand, alias);
+        addCanonicalTabEntry(canonicalTabByLookup, tabName, alias);
       }
     }
 
@@ -255,7 +293,138 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
     .map(([tabName, count]) => `${tabName}:${count}`)
     .join("|");
 
-  return { brandByTab, leadTableColumns, leadCountByTab, leadCountSignature };
+  return { brandByTab, canonicalTabByLookup, leadTableColumns, leadCountByTab, leadCountSignature };
+}
+
+function parseDigitalLeadEntries(dataSheet: RawSheet | undefined) {
+  const digitalLeads: DigitalLeadImportEntry[] = [];
+
+  if (!dataSheet) {
+    return digitalLeads;
+  }
+
+  const typeIdx = dataSheet.headers.indexOf(normalizeHeader("Report Type"));
+  const brandIdx = dataSheet.headers.indexOf(normalizeHeader("Report Brand"));
+  const dateIdx = dataSheet.headers.indexOf(normalizeHeader("Report Date"));
+  const actualIdx = dataSheet.headers.indexOf(normalizeHeader("Actual"));
+  const contactedIdx = dataSheet.headers.indexOf(normalizeHeader("Contacted"));
+  const nonContactedIdx = dataSheet.headers.indexOf(normalizeHeader("Non Contacted"));
+  const interestedIdx = dataSheet.headers.indexOf(normalizeHeader("Interested"));
+
+  if (typeIdx === -1 || brandIdx === -1 || dateIdx === -1) {
+    return digitalLeads;
+  }
+
+  dataSheet.rows.forEach((row) => {
+    if (
+      row[dataSheet.headers[typeIdx]] === DIGITAL_REPORT_TYPE &&
+      row[dataSheet.headers[brandIdx]] === "redwing"
+    ) {
+      digitalLeads.push({
+        date: row[dataSheet.headers[dateIdx]] || "",
+        actual: normalizeDigitalMetric(row[dataSheet.headers[actualIdx]]),
+        contacted: normalizeDigitalMetric(row[dataSheet.headers[contactedIdx]]),
+        nonContacted: normalizeDigitalMetric(row[dataSheet.headers[nonContactedIdx]]),
+        interested: normalizeDigitalMetric(row[dataSheet.headers[interestedIdx]]),
+      });
+    }
+  });
+
+  return digitalLeads.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mapToRecord<T>(map: Map<string, T>) {
+  return Object.fromEntries(map.entries());
+}
+
+function recordToMap<T>(record: Record<string, T>) {
+  return new Map(Object.entries(record));
+}
+
+function buildWorkbookSnapshot(
+  rawSheets: RawSheet[],
+  dataSheetConfig: DataSheetConfig,
+): WorkbookSnapshot {
+  const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
+  const rowsByTab: Record<string, DashboardRow[]> = {};
+  const sheetTitleByTab: Record<string, string> = {};
+  const tabs = usableSheets.map((sheet) => expandAliases(sheet.title));
+
+  usableSheets.forEach((sheet) => {
+    const expandedTabName = expandAliases(sheet.title);
+    rowsByTab[expandedTabName] = sheet.rows
+      .filter((row) => Object.values(row).some(Boolean))
+      .map((row, index) => normalizeRow(sheet.title, row, index, dataSheetConfig));
+    sheetTitleByTab[expandedTabName] = sheet.title;
+  });
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    leadCountSignature: dataSheetConfig.leadCountSignature,
+    leadCountByTab: mapToRecord(dataSheetConfig.leadCountByTab),
+    brandByTab: mapToRecord(dataSheetConfig.brandByTab),
+    canonicalTabByLookup: mapToRecord(dataSheetConfig.canonicalTabByLookup),
+    sheetTitleByTab,
+    tabs,
+    rowsByTab,
+    digitalLeads: parseDigitalLeadEntries(
+      rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE),
+    ),
+    leadTableColumns: dataSheetConfig.leadTableColumns,
+  };
+}
+
+function buildWorkbookDataFromSnapshot(snapshot: WorkbookSnapshot): WorkbookData {
+  const spreadsheetId = process.env.SHEET_ID ?? "";
+  const defaultTabName = process.env.TAB_NAME ?? "DATA";
+  const rows = snapshot.tabs.flatMap((tab) => snapshot.rowsByTab[tab] ?? []);
+
+  return {
+    sheetId: spreadsheetId,
+    defaultTabName,
+    tabs: snapshot.tabs,
+    rows,
+    digitalLeads: snapshot.digitalLeads,
+    leadTableColumns: snapshot.leadTableColumns,
+  };
+}
+
+async function ensureSnapshotDirectory() {
+  await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
+}
+
+async function readWorkbookSnapshot() {
+  try {
+    const contents = await fs.readFile(SNAPSHOT_PATH, "utf8");
+    const parsed = JSON.parse(contents) as WorkbookSnapshot;
+
+    if (parsed.version !== 1) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeWorkbookSnapshot(snapshot: WorkbookSnapshot) {
+  await ensureSnapshotDirectory();
+  await fs.writeFile(SNAPSHOT_PATH, JSON.stringify(snapshot), "utf8");
+}
+
+async function appendDigitalLeadsToSnapshot(entries: DigitalLeadImportEntry[]) {
+  const snapshot = await readWorkbookSnapshot();
+  if (!snapshot) return;
+
+  const nextSnapshot: WorkbookSnapshot = {
+    ...snapshot,
+    generatedAt: new Date().toISOString(),
+    digitalLeads: [...snapshot.digitalLeads, ...entries].sort((a, b) => a.date.localeCompare(b.date)),
+  };
+
+  await writeWorkbookSnapshot(nextSnapshot);
 }
 
 function normalizeRow(
@@ -264,8 +433,11 @@ function normalizeRow(
   index: number,
   dataSheetConfig: DataSheetConfig,
 ): DashboardRow {
+  const expandedTabName = expandAliases(tabName);
+  const canonicalTabName =
+    dataSheetConfig.canonicalTabByLookup.get(normalizeLookupKey(expandedTabName)) ?? expandedTabName;
   const campaign = expandAliases(
-    getFirstValue(row, ["campaign", "campaign_name", "campaignname"]) || tabName,
+    getFirstValue(row, ["campaign", "campaign_name", "campaignname"]) || canonicalTabName,
   );
   const adName = expandAliases(getFirstValue(row, ["ad_name", "adname", "ad", "creative_name"]));
   const formName = expandAliases(getFirstValue(row, ["form_name", "formname"]));
@@ -287,13 +459,12 @@ function normalizeRow(
     getFirstValue(row, ["date", "day", "reporting_starts", "start_date", "created_time"]),
   );
   const brandAlias = expandAliases(getFirstValue(row, ["brand", "brand_alias", "account_name", "account"]));
-  const expandedTabName = expandAliases(tabName);
   const mappedBrand = dataSheetConfig.brandByTab.get(normalizeLookupKey(expandedTabName));
   const brand = mappedBrand ?? normalizeBrandValue(brandAlias);
 
   return {
     id: `${tabName}-${index}`,
-    tabName: expandedTabName,
+    tabName: canonicalTabName,
     date,
     brand: brand ?? "unknown",
     campaign,
@@ -411,6 +582,58 @@ async function fetchRawSheets(): Promise<RawSheet[]> {
   );
 }
 
+async function fetchIncrementalRawSheets(
+  sheetRequests: Array<{ title: string; startRow: number }>,
+): Promise<RawSheet[]> {
+  if (sheetRequests.length === 0) {
+    return [];
+  }
+
+  const spreadsheetId = getSpreadsheetId();
+  const sheets = await getSheetsClient();
+  const ranges = sheetRequests.flatMap(({ title, startRow }) => {
+    const escapedTitle = `'${title.replace(/'/g, "''")}'`;
+    return [`${escapedTitle}!1:1`, `${escapedTitle}!A${startRow}:ZZ`];
+  });
+
+  const values = await Promise.race([
+    sheets.spreadsheets.values.batchGet({
+      spreadsheetId,
+      ranges,
+      majorDimension: "ROWS",
+    }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Google Sheets request timed out (15s limit). Your data might be too large.")), 15000),
+    ),
+  ]) as unknown as GSheetsResponse;
+
+  const valueRanges = values.data.valueRanges ?? [];
+
+  return sheetRequests.map((sheetRequest, index) => {
+    const headerRows = valueRanges[index * 2]?.values ?? [];
+    const dataRows = valueRanges[index * 2 + 1]?.values ?? [];
+    const headerRow = headerRows[0] ?? [];
+    const headers = headerRow.map((header) => normalizeHeader(String(header)));
+    const rows = dataRows.map((cells) => {
+      const record: Record<string, string> = {};
+
+      headers.forEach((header, cellIndex) => {
+        if (!header) return;
+        record[header] = String(cells[cellIndex] ?? "").trim();
+      });
+
+      return record;
+    });
+
+    return {
+      id: index,
+      title: sheetRequest.title,
+      headers,
+      rows,
+    };
+  });
+}
+
 /** In-memory TTL cache shared across all requests (30 seconds) */
 const CACHE_TTL_MS = 60_000;
 const COUNT_CHECK_TTL_MS = 10_000;
@@ -418,10 +641,20 @@ let _cachedData: WorkbookData | null = null;
 let _cacheTimestamp = 0;
 let _inflightPromise: Promise<WorkbookData> | null = null;
 let _cachedCountSignature = "";
+let _cachedCountByTab = new Map<string, number>();
 let _countCheckTimestamp = 0;
-let _countCheckPromise: Promise<string> | null = null;
+let _countCheckPromise: Promise<LeadCountState> | null = null;
 
-async function fetchLeadCountSignature(): Promise<string> {
+function buildLeadCountState(countByTab: Map<string, number>): LeadCountState {
+  const signature = Array.from(countByTab.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([tabName, count]) => `${tabName}:${count}`)
+    .join("|");
+
+  return { countByTab, signature };
+}
+
+async function fetchLeadCountState(): Promise<LeadCountState> {
   const spreadsheetId = getSpreadsheetId();
   const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.values.get({
@@ -441,39 +674,44 @@ async function fetchLeadCountSignature(): Promise<string> {
   );
 
   if (tabNameIndex === -1 || leadCountIndex === -1) {
-    return "";
+    return { countByTab: new Map(), signature: "" };
   }
 
-  const signatureEntries = rows
-    .slice(1)
-    .map((cells) => ({
-      tabName: expandAliases(String(cells[tabNameIndex] ?? "").trim()),
-      leadCount: Number.parseInt(String(cells[leadCountIndex] ?? "").trim(), 10),
-    }))
-    .filter((entry) => entry.tabName && Number.isFinite(entry.leadCount) && entry.leadCount >= 0)
-    .sort((left, right) => left.tabName.localeCompare(right.tabName))
-    .map((entry) => `${entry.tabName}:${entry.leadCount}`);
+  const countByTab = new Map<string, number>();
 
-  return signatureEntries.join("|");
+  rows.slice(1).forEach((cells) => {
+    const tabName = expandAliases(String(cells[tabNameIndex] ?? "").trim());
+    const leadCount = Number.parseInt(String(cells[leadCountIndex] ?? "").trim(), 10);
+
+    if (tabName && Number.isFinite(leadCount) && leadCount >= 0) {
+      countByTab.set(tabName, leadCount);
+    }
+  });
+
+  return buildLeadCountState(countByTab);
 }
 
-async function getFreshLeadCountSignature(force = false): Promise<string> {
+async function getFreshLeadCountState(force = false): Promise<LeadCountState> {
   const now = Date.now();
 
   if (!force && _cachedCountSignature && now - _countCheckTimestamp < COUNT_CHECK_TTL_MS) {
-    return _cachedCountSignature;
+    return {
+      countByTab: new Map(_cachedCountByTab),
+      signature: _cachedCountSignature,
+    };
   }
 
   if (_countCheckPromise) {
     return _countCheckPromise;
   }
 
-  _countCheckPromise = fetchLeadCountSignature()
-    .then((signature) => {
-      _cachedCountSignature = signature;
+  _countCheckPromise = fetchLeadCountState()
+    .then((state) => {
+      _cachedCountSignature = state.signature;
+      _cachedCountByTab = new Map(state.countByTab);
       _countCheckTimestamp = Date.now();
       _countCheckPromise = null;
-      return signature;
+      return state;
     })
     .catch((error) => {
       _countCheckPromise = null;
@@ -484,61 +722,19 @@ async function getFreshLeadCountSignature(force = false): Promise<string> {
 }
 
 async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
-  const spreadsheetId = process.env.SHEET_ID ?? "";
-  const defaultTabName = process.env.TAB_NAME ?? "DATA";
-
   try {
     const rawSheets = await fetchRawSheets();
-    const dataSheet = rawSheets.find((sheet) => sheet.title.trim().toUpperCase() === DATA_SHEET_TITLE);
-    const digitalLeads: DigitalLeadImportEntry[] = [];
-
-    if (dataSheet) {
-      const typeIdx = dataSheet.headers.indexOf(normalizeHeader("Report Type"));
-      const brandIdx = dataSheet.headers.indexOf(normalizeHeader("Report Brand"));
-      const dateIdx = dataSheet.headers.indexOf(normalizeHeader("Report Date"));
-      const actualIdx = dataSheet.headers.indexOf(normalizeHeader("Actual"));
-      const contactedIdx = dataSheet.headers.indexOf(normalizeHeader("Contacted"));
-      const nonContactedIdx = dataSheet.headers.indexOf(normalizeHeader("Non Contacted"));
-      const interestedIdx = dataSheet.headers.indexOf(normalizeHeader("Interested"));
-
-      if (typeIdx !== -1 && brandIdx !== -1 && dateIdx !== -1) {
-        dataSheet.rows.forEach((row) => {
-          if (
-            row[dataSheet.headers[typeIdx]] === DIGITAL_REPORT_TYPE &&
-            row[dataSheet.headers[brandIdx]] === "redwing"
-          ) {
-            digitalLeads.push({
-              date: row[dataSheet.headers[dateIdx]] || "",
-              actual: normalizeDigitalMetric(row[dataSheet.headers[actualIdx]]),
-              contacted: normalizeDigitalMetric(row[dataSheet.headers[contactedIdx]]),
-              nonContacted: normalizeDigitalMetric(row[dataSheet.headers[nonContactedIdx]]),
-              interested: normalizeDigitalMetric(row[dataSheet.headers[interestedIdx]]),
-            });
-          }
-        });
-      }
-    }
-
     const dataSheetConfig = extractDataSheetConfig(rawSheets);
+    const snapshot = buildWorkbookSnapshot(rawSheets, dataSheetConfig);
     _cachedCountSignature = dataSheetConfig.leadCountSignature;
+    _cachedCountByTab = new Map(dataSheetConfig.leadCountByTab);
     _countCheckTimestamp = Date.now();
-    const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
-    const tabs = usableSheets.map((sheet) => expandAliases(sheet.title));
-    const rows = usableSheets.flatMap((sheet) =>
-      sheet.rows
-        .filter((row) => Object.values(row).some(Boolean))
-        .map((row, index) => normalizeRow(sheet.title, row, index, dataSheetConfig)),
-    );
+    await writeWorkbookSnapshot(snapshot);
 
-    return {
-      sheetId: spreadsheetId,
-      defaultTabName,
-      tabs,
-      rows,
-      digitalLeads: digitalLeads.sort((a, b) => a.date.localeCompare(b.date)),
-      leadTableColumns: dataSheetConfig.leadTableColumns,
-    };
+    return buildWorkbookDataFromSnapshot(snapshot);
   } catch (error) {
+    const spreadsheetId = process.env.SHEET_ID ?? "";
+    const defaultTabName = process.env.TAB_NAME ?? "DATA";
     const message =
       error instanceof Error ? error.message : "Unable to read spreadsheet data right now.";
 
@@ -554,6 +750,79 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
   }
 }
 
+async function refreshSnapshotByAppend(
+  snapshot: WorkbookSnapshot,
+  leadCountState: LeadCountState,
+): Promise<WorkbookSnapshot | null> {
+  const changedTabs: string[] = [];
+  const previousCountByTab = recordToMap(snapshot.leadCountByTab);
+
+  for (const [tabName, nextCount] of leadCountState.countByTab.entries()) {
+    const previousCount = previousCountByTab.get(tabName) ?? snapshot.rowsByTab[tabName]?.length;
+    const sheetTitle = snapshot.sheetTitleByTab[tabName];
+
+    if (previousCount === undefined || !sheetTitle) {
+      return null;
+    }
+
+    if (nextCount < previousCount) {
+      return null;
+    }
+
+    if (nextCount > previousCount) {
+      changedTabs.push(tabName);
+    }
+  }
+
+  for (const tabName of Object.keys(snapshot.rowsByTab)) {
+    if (!leadCountState.countByTab.has(tabName)) {
+      return null;
+    }
+  }
+
+  if (changedTabs.length === 0) {
+    return {
+      ...snapshot,
+      generatedAt: new Date().toISOString(),
+      leadCountSignature: leadCountState.signature,
+      leadCountByTab: mapToRecord(leadCountState.countByTab),
+    };
+  }
+
+  const dataSheetConfig: DataSheetConfig = {
+    brandByTab: recordToMap(snapshot.brandByTab),
+    canonicalTabByLookup: recordToMap(snapshot.canonicalTabByLookup),
+    leadTableColumns: snapshot.leadTableColumns,
+    leadCountByTab: leadCountState.countByTab,
+    leadCountSignature: leadCountState.signature,
+  };
+  const incrementalSheets = await fetchIncrementalRawSheets(
+    changedTabs.map((tabName) => ({
+      title: snapshot.sheetTitleByTab[tabName],
+      startRow: (snapshot.rowsByTab[tabName]?.length ?? 0) + 2,
+    })),
+  );
+  const nextRowsByTab = { ...snapshot.rowsByTab };
+
+  incrementalSheets.forEach((sheet) => {
+    const expandedTabName = expandAliases(sheet.title);
+    const existingRows = nextRowsByTab[expandedTabName] ?? [];
+    const appendedRows = sheet.rows
+      .filter((row) => Object.values(row).some(Boolean))
+      .map((row, index) => normalizeRow(sheet.title, row, existingRows.length + index, dataSheetConfig));
+
+    nextRowsByTab[expandedTabName] = [...existingRows, ...appendedRows];
+  });
+
+  return {
+    ...snapshot,
+    generatedAt: new Date().toISOString(),
+    leadCountSignature: leadCountState.signature,
+    leadCountByTab: mapToRecord(leadCountState.countByTab),
+    rowsByTab: nextRowsByTab,
+  };
+}
+
 export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
   const now = Date.now();
   const cachedData = _cachedData;
@@ -561,8 +830,8 @@ export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
   // Return cached data if still fresh
   if (cachedData && now - _cacheTimestamp < CACHE_TTL_MS) {
     try {
-      const latestSignature = await getFreshLeadCountSignature();
-      if (latestSignature === _cachedCountSignature) {
+      const latestLeadCountState = await getFreshLeadCountState();
+      if (latestLeadCountState.signature === _cachedCountSignature) {
         return cachedData;
       }
 
@@ -578,15 +847,48 @@ export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
     return _inflightPromise;
   }
 
-  _inflightPromise = fetchWorkbookDataInternal().then((data) => {
+  _inflightPromise = (async () => {
+    const snapshot = await readWorkbookSnapshot();
+
+    if (snapshot) {
+      try {
+        const latestLeadCountState = await getFreshLeadCountState();
+
+        if (snapshot.leadCountSignature === latestLeadCountState.signature) {
+          const data = buildWorkbookDataFromSnapshot(snapshot);
+          _cachedData = data;
+          _cacheTimestamp = Date.now();
+          return data;
+        }
+
+        const nextSnapshot = await refreshSnapshotByAppend(snapshot, latestLeadCountState);
+        if (nextSnapshot) {
+          await writeWorkbookSnapshot(nextSnapshot);
+          _cachedCountSignature = nextSnapshot.leadCountSignature;
+          _cachedCountByTab = recordToMap(nextSnapshot.leadCountByTab);
+          _countCheckTimestamp = Date.now();
+
+          const data = buildWorkbookDataFromSnapshot(nextSnapshot);
+          _cachedData = data;
+          _cacheTimestamp = Date.now();
+          return data;
+        }
+      } catch {
+        const data = buildWorkbookDataFromSnapshot(snapshot);
+        _cachedData = data;
+        _cacheTimestamp = Date.now();
+        return data;
+      }
+    }
+
+    const data = await fetchWorkbookDataInternal();
     _cachedData = data;
     _cacheTimestamp = Date.now();
-    _inflightPromise = null;
     return data;
-  }).catch((error) => {
-    _inflightPromise = null;
-    throw error;
-  });
+  })()
+    .finally(() => {
+      _inflightPromise = null;
+    });
 
   return _inflightPromise;
 });
@@ -772,6 +1074,7 @@ export async function appendDigitalLeadImport(
     },
   });
 
+  await appendDigitalLeadsToSnapshot(entries);
   _cachedData = null;
   _cacheTimestamp = 0;
 }

@@ -18,6 +18,7 @@ type DateRangePickerProps = {
   brand: Brand;
   footerAction?: React.ReactNode;
   closeOnApply?: boolean;
+  showLabel?: boolean;
 };
 
 export function DateRangePicker({
@@ -26,6 +27,7 @@ export function DateRangePicker({
   brand,
   footerAction,
   closeOnApply = true,
+  showLabel = true,
 }: DateRangePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [draftDate, setDraftDate] = React.useState<DateRange | undefined>(date);
@@ -78,7 +80,7 @@ export function DateRangePicker({
 
   return (
     <Field className="w-full min-w-[240px]">
-      <FieldLabel htmlFor="date-picker-range">Date Range</FieldLabel>
+      {showLabel ? <FieldLabel htmlFor="date-picker-range">Date Range</FieldLabel> : null}
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <Button
