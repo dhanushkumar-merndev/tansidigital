@@ -33,6 +33,8 @@ type LeadsPageClientProps = {
 };
 
 const leadBrandOptions: ConcreteBrand[] = ["bigwing", "redwing"];
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
+const AUTO_REFRESH_THROTTLE_MS = 15_000;
 
 const FIXED_COLUMNS: LeadTableColumn[] = [
   { key: "tab_name", label: "Tab Name" },
@@ -151,6 +153,7 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const autoRefreshTimestampRef = React.useRef(0);
   const campaignScrollRef = React.useRef<HTMLDivElement | null>(null);
   const tableScrollRef = React.useRef<LenisRef | null>(null);
   const suppressChipClickRef = React.useRef(false);
@@ -187,6 +190,55 @@ export function LeadsPageClient({ workbook, initialBrand }: LeadsPageClientProps
   React.useEffect(() => {
     setSelectedCampaigns([]);
   }, [brand]);
+
+  const requestWorkbookRefresh = React.useEffectEvent(() => {
+    if (typeof document === "undefined" || document.visibilityState !== "visible") {
+      return;
+    }
+
+    if (isPending || isBrandPending) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - autoRefreshTimestampRef.current < AUTO_REFRESH_THROTTLE_MS) {
+      return;
+    }
+
+    autoRefreshTimestampRef.current = now;
+    router.refresh();
+  });
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleFocus = () => {
+      requestWorkbookRefresh();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        requestWorkbookRefresh();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        requestWorkbookRefresh();
+      }
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   const brandRows = workbook.rows.filter((row) => row.brand === brand);
   const campaignOptions = Array.from(new Set(brandRows.map((row) => row.campaign).filter(Boolean))).sort();

@@ -1,6 +1,5 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { cache } from "react";
 
 import { type ConcreteBrand } from "@/lib/brands";
 
@@ -414,6 +413,15 @@ async function writeWorkbookSnapshot(snapshot: WorkbookSnapshot) {
   await fs.writeFile(SNAPSHOT_PATH, JSON.stringify(snapshot), "utf8");
 }
 
+async function getWorkbookSnapshotTimestamp() {
+  try {
+    const stats = await fs.stat(SNAPSHOT_PATH);
+    return stats.mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 async function appendDigitalLeadsToSnapshot(entries: DigitalLeadImportEntry[]) {
   const snapshot = await readWorkbookSnapshot();
   if (!snapshot) return;
@@ -814,6 +822,15 @@ async function refreshSnapshotByAppend(
     nextRowsByTab[expandedTabName] = [...existingRows, ...appendedRows];
   });
 
+  for (const tabName of changedTabs) {
+    const expectedCount = leadCountState.countByTab.get(tabName);
+    const actualCount = nextRowsByTab[tabName]?.length ?? 0;
+
+    if (expectedCount === undefined || actualCount !== expectedCount) {
+      return null;
+    }
+  }
+
   return {
     ...snapshot,
     generatedAt: new Date().toISOString(),
@@ -843,22 +860,29 @@ export async function refreshWorkbookData(): Promise<WorkbookData> {
   return data;
 }
 
-export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
+export async function getWorkbookData(): Promise<WorkbookData> {
   const now = Date.now();
   const cachedData = _cachedData;
 
   // Return cached data if still fresh
   if (cachedData && now - _cacheTimestamp < CACHE_TTL_MS) {
-    try {
-      const latestLeadCountState = await getFreshLeadCountState();
-      if (latestLeadCountState.signature === _cachedCountSignature) {
-        return cachedData;
-      }
+    const snapshotTimestamp = await getWorkbookSnapshotTimestamp();
 
+    if (snapshotTimestamp > _cacheTimestamp) {
       _cachedData = null;
       _cacheTimestamp = 0;
-    } catch {
-      return cachedData;
+    } else {
+      try {
+        const latestLeadCountState = await getFreshLeadCountState();
+        if (latestLeadCountState.signature === _cachedCountSignature) {
+          return cachedData;
+        }
+
+        _cachedData = null;
+        _cacheTimestamp = 0;
+      } catch {
+        return cachedData;
+      }
     }
   }
 
@@ -911,7 +935,7 @@ export const getWorkbookData = cache(async (): Promise<WorkbookData> => {
     });
 
   return _inflightPromise;
-});
+}
 
 function getSpreadsheetId() {
   const spreadsheetId = process.env.SHEET_ID;

@@ -89,6 +89,8 @@ type MetaSpendSummary = {
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
 const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
+const AUTO_REFRESH_THROTTLE_MS = 15_000;
 
 type FilterSelectProps = {
   id: string;
@@ -629,6 +631,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const autoRefreshTimestampRef = React.useRef(0);
   const [brand, setBrand] = React.useState<Brand>(initialBrand);
   const [campaignFilter, setCampaignFilter] = React.useState("all");
   const [searchFilter, setSearchFilter] = React.useState("");
@@ -677,6 +680,55 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
       setCampaignFilter("all");
     }
   }, [brand]);
+
+  const requestWorkbookRefresh = React.useEffectEvent(() => {
+    if (typeof document === "undefined" || document.visibilityState !== "visible") {
+      return;
+    }
+
+    if (isBrandPending || isWorkbookRefreshing) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - autoRefreshTimestampRef.current < AUTO_REFRESH_THROTTLE_MS) {
+      return;
+    }
+
+    autoRefreshTimestampRef.current = now;
+    router.refresh();
+  });
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleFocus = () => {
+      requestWorkbookRefresh();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        requestWorkbookRefresh();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        requestWorkbookRefresh();
+      }
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   React.useEffect(() => {
     setIsDigitalModalOpen(false);
@@ -1677,12 +1729,16 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       />
                       <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
                       <Tooltip
+                        allowEscapeViewBox={{ x: false, y: true }}
                         contentStyle={{
                           backgroundColor: "#1a1a1a",
                           border: "1px solid rgba(255,255,255,0.1)",
                           borderRadius: "12px",
                           fontSize: "12px",
                         }}
+                        offset={{ x: 0, y: 16 }}
+                        reverseDirection={{ x: false, y: true }}
+                        wrapperStyle={{ zIndex: 9999 }}
                       />
                       <Legend wrapperStyle={{ fontSize: "10px", marginTop: "10px" }} />
                       <Line
