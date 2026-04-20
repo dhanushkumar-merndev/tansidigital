@@ -11,6 +11,7 @@ type PageProps = {
 };
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function normalizeLeadBrand(value: string | null | undefined): ConcreteBrand {
   const brand = normalizeBrand(value);

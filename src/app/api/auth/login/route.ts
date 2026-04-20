@@ -1,14 +1,37 @@
 import { NextResponse } from "next/server";
 
-import { createSessionToken, getSessionCookieName, getSessionMaxAgeSeconds, verifyPin } from "@/lib/auth";
+import {
+  buildPinFailureMessage,
+  createSessionToken,
+  getPinRateLimitStatus,
+  getSessionCookieName,
+  getSessionMaxAgeSeconds,
+  registerPinAttempt,
+  verifyPin,
+} from "@/lib/auth";
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as { pin?: string } | null;
   const pin = body?.pin?.trim() ?? "";
+  const rateLimitStatus = await getPinRateLimitStatus("dashboard", request);
+
+  if (rateLimitStatus.isBlocked) {
+    return NextResponse.json(
+      { ok: false, error: buildPinFailureMessage("PIN", rateLimitStatus) },
+      { status: 429 },
+    );
+  }
 
   if (!verifyPin(pin)) {
-    return NextResponse.json({ ok: false }, { status: 401 });
+    const failureStatus = await registerPinAttempt("dashboard", request, false);
+
+    return NextResponse.json(
+      { ok: false, error: buildPinFailureMessage("PIN", failureStatus) },
+      { status: failureStatus.isBlocked ? 429 : 401 },
+    );
   }
+
+  await registerPinAttempt("dashboard", request, true);
 
   const token = createSessionToken();
   if (!token) {

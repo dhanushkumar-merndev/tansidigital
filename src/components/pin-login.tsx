@@ -49,11 +49,14 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
       },
       body: JSON.stringify({ pin }),
     });
+    const data = (await response.json().catch(() => null)) as
+      | { error?: string; ok?: boolean }
+      | null;
 
     if (!response.ok) {
       setPin("");
       setIsSubmitting(false);
-      setError("Wrong PIN. Try again.");
+      setError(data?.error ?? "Wrong PIN. Try again.");
       await trigger(PIN_HEAVY_HAPTIC_PRESET);
       return;
     }

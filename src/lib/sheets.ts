@@ -195,6 +195,7 @@ const DEFAULT_REDWING_LOCATION_LABELS = [
   "panathur",
 ];
 const LEADS_PAGE_SIZE = 100;
+const LEADS_INDEX_SCHEMA_VERSION = "2";
 const SNAPSHOT_SOURCE_PATH = path.join(process.cwd(), "data", "workbook-snapshot.json");
 const IS_CLOUD_ENVIRONMENT = process.env.NODE_ENV === "production" || !!process.env.VERCEL || !!process.env.AWS_REGION;
 
@@ -239,6 +240,8 @@ const DIGITAL_DATA_HEADERS = [
   "Prompt Used",
   "Imported At",
 ] as const;
+const DIGITAL_DATA_HEADER_RANGE = `${DATA_SHEET_TITLE}!F1:N1`;
+const DIGITAL_DATA_APPEND_RANGE = `${DATA_SHEET_TITLE}!F:N`;
 
 function normalizeHeader(value: string) {
   return value
@@ -1540,7 +1543,11 @@ async function ensureLeadsIndexDirectory() {
 }
 
 async function openLeadsIndexDatabase() {
-  const { DatabaseSync } = await import("node:sqlite");
+  const { DatabaseSync } = await import(
+    /* webpackIgnore: true */
+    /* turbopackIgnore: true */
+    "node:sqlite"
+  );
   const database = new DatabaseSync(LEADS_INDEX_RUNTIME_PATH);
 
   database.exec(`
@@ -1563,6 +1570,11 @@ async function openLeadsIndexDatabase() {
       is_organic INTEGER NOT NULL,
       lead_count INTEGER NOT NULL,
       search_text TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS leads_search USING fts5(
+      id UNINDEXED,
+      search_text,
+      tokenize = 'unicode61 remove_diacritics 2'
     );
     CREATE TABLE IF NOT EXISTS leads_index_meta (
       key TEXT PRIMARY KEY,
@@ -1597,12 +1609,16 @@ async function getLeadsIndexSource() {
 
 function rebuildLeadsIndex(database: DatabaseSync, rows: DashboardRow[], signature: string) {
   const clearLeads = database.prepare("DELETE FROM leads");
+  const clearSearch = database.prepare("DELETE FROM leads_search");
   const clearMeta = database.prepare("DELETE FROM leads_index_meta");
   const insertLead = database.prepare(`
     INSERT INTO leads (
       id, tab_name, date, brand, campaign, ad_name, form_name, platform, location,
       full_name, phone_number, email, lead_status, is_organic, lead_count, search_text
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertSearch = database.prepare(`
+    INSERT INTO leads_search (id, search_text) VALUES (?, ?)
   `);
   const insertMeta = database.prepare(
     "INSERT INTO leads_index_meta (key, value) VALUES (?, ?)",
@@ -1612,9 +1628,12 @@ function rebuildLeadsIndex(database: DatabaseSync, rows: DashboardRow[], signatu
 
   try {
     clearLeads.run();
+    clearSearch.run();
     clearMeta.run();
 
     for (const row of rows) {
+      const searchText = buildLeadsSearchText(row);
+
       insertLead.run(
         row.id,
         row.tabName,
@@ -1631,10 +1650,12 @@ function rebuildLeadsIndex(database: DatabaseSync, rows: DashboardRow[], signatu
         row.leadStatus,
         row.isOrganic ? 1 : 0,
         row.leadCount,
-        buildLeadsSearchText(row),
+        searchText,
       );
+      insertSearch.run(row.id, searchText);
     }
 
+    insertMeta.run("schemaVersion", LEADS_INDEX_SCHEMA_VERSION);
     insertMeta.run("signature", signature);
     insertMeta.run("rowCount", String(rows.length));
     insertMeta.run("updatedAt", new Date().toISOString());
@@ -1653,11 +1674,16 @@ async function ensureLeadsIndexReady() {
   const database = await openLeadsIndexDatabase();
 
   try {
-    const currentSignature = database
-      .prepare("SELECT value FROM leads_index_meta WHERE key = ?")
-      .get("signature") as { value?: string } | undefined;
+    const currentMetaRows = database
+      .prepare("SELECT key, value FROM leads_index_meta")
+      .all() as Array<{ key?: string; value?: string }>;
+    const currentMeta = new Map(
+      currentMetaRows.map((row) => [row.key ?? "", row.value ?? ""]),
+    );
+    const currentSignature = currentMeta.get("signature");
+    const currentSchemaVersion = currentMeta.get("schemaVersion");
 
-    if (currentSignature?.value !== signature) {
+    if (currentSignature !== signature || currentSchemaVersion !== LEADS_INDEX_SCHEMA_VERSION) {
       rebuildLeadsIndex(database, rows, signature);
     }
 
@@ -1689,37 +1715,45 @@ function normalizeLeadsQuery(query: Partial<LeadsPageQuery>): LeadsPageQuery {
   };
 }
 
-function escapeLikeValue(value: string) {
-  return value.replace(/[\\%_]/g, "\\$&");
-}
-
 function buildLeadsWhereClause(query: LeadsPageQuery) {
-  const clauses = ["brand = ?"];
+  const joins: string[] = [];
+  const clauses = ["leads.brand = ?"];
   const params: Array<string | number> = [query.brand];
 
   if (query.campaigns.length > 0) {
-    clauses.push(`campaign IN (${query.campaigns.map(() => "?").join(", ")})`);
+    clauses.push(`leads.campaign IN (${query.campaigns.map(() => "?").join(", ")})`);
     params.push(...query.campaigns);
   }
 
   if (query.from) {
-    clauses.push("date >= ?");
+    clauses.push("leads.date >= ?");
     params.push(query.from);
   }
 
   if (query.to) {
-    clauses.push("date <= ?");
+    clauses.push("leads.date <= ?");
     params.push(query.to);
   }
 
-  if (query.q) {
-    clauses.push("search_text LIKE ? ESCAPE '\\'");
-    params.push(`%${escapeLikeValue(query.q.toLowerCase())}%`);
+  const searchMatch = query.q
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((token) => `${token}*`)
+    .join(" AND ");
+
+  if (searchMatch) {
+    joins.push("INNER JOIN leads_search ON leads_search.id = leads.id");
+    clauses.push("leads_search.search_text MATCH ?");
+    params.push(searchMatch);
   }
 
   return {
+    fromSql: `FROM leads ${joins.join(" ")}`.trim(),
     params,
-    sql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
+    whereSql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
   };
 }
 
@@ -2395,10 +2429,10 @@ export async function getLeadsPageData(
         validCampaigns.length === normalizedQuery.campaigns.length
           ? normalizedQuery
           : { ...normalizedQuery, campaigns: validCampaigns };
-      const whereClause = buildLeadsWhereClause(effectiveQuery);
+      const queryParts = buildLeadsWhereClause(effectiveQuery);
       const totalRow = database
-        .prepare(`SELECT COUNT(*) as total FROM leads ${whereClause.sql}`)
-        .get(...whereClause.params) as { total?: number } | undefined;
+        .prepare(`SELECT COUNT(*) as total ${queryParts.fromSql} ${queryParts.whereSql}`)
+        .get(...queryParts.params) as { total?: number } | undefined;
       const total = Number(totalRow?.total ?? 0);
       const totalPages = Math.max(1, Math.ceil(total / LEADS_PAGE_SIZE));
       const page = Math.min(effectiveQuery.page, totalPages);
@@ -2407,16 +2441,17 @@ export async function getLeadsPageData(
       const rows = database
         .prepare(`
           SELECT
-            id, tab_name, date, brand, campaign, ad_name, form_name,
-            platform, location, full_name, phone_number, email,
-            lead_status, is_organic, lead_count
-          FROM leads
-          ${whereClause.sql}
-          ORDER BY date ${orderBy}, id ${orderBy}
+            leads.id, leads.tab_name, leads.date, leads.brand, leads.campaign,
+            leads.ad_name, leads.form_name, leads.platform, leads.location,
+            leads.full_name, leads.phone_number, leads.email,
+            leads.lead_status, leads.is_organic, leads.lead_count
+          ${queryParts.fromSql}
+          ${queryParts.whereSql}
+          ORDER BY leads.date ${orderBy}, leads.id ${orderBy}
           LIMIT ? OFFSET ?
         `)
         .all(
-          ...whereClause.params,
+          ...queryParts.params,
           LEADS_PAGE_SIZE,
           offset,
         ) as LeadsIndexRow[];
@@ -2557,29 +2592,48 @@ export async function getDigitalLeadImportMeta(): Promise<DigitalLeadImportMeta>
 async function ensureDataSheetHeaders() {
   const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
   const spreadsheetId = getSpreadsheetId();
-  const range = `${DATA_SHEET_TITLE}!1:1`;
-  const headerResponse = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: DIGITAL_DATA_HEADER_RANGE,
+  });
   const existingHeaders = (headerResponse.data.values?.[0] ?? []).map((value) => String(value).trim());
-  const mergedHeaders = [...existingHeaders];
+  const expectedHeaders = [...DIGITAL_DATA_HEADERS];
+  const headersMatch =
+    existingHeaders.length === expectedHeaders.length &&
+    existingHeaders.every((header, index) => header === expectedHeaders[index]);
 
-  for (const header of DIGITAL_DATA_HEADERS) {
-    if (!mergedHeaders.includes(header)) {
-      mergedHeaders.push(header);
-    }
-  }
-
-  if (mergedHeaders.length !== existingHeaders.length) {
+  if (!headersMatch) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range,
+      range: DIGITAL_DATA_HEADER_RANGE,
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [mergedHeaders],
+        values: [expectedHeaders],
       },
     });
   }
 
-  return mergedHeaders;
+  return expectedHeaders;
+}
+
+async function getNextDigitalDataRow() {
+  const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets.readonly"]);
+  const spreadsheetId = getSpreadsheetId();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: DIGITAL_DATA_APPEND_RANGE,
+    majorDimension: "ROWS",
+  });
+  const rows = response.data.values ?? [];
+  let lastUsedRow = 1;
+
+  rows.forEach((row, index) => {
+    if (row.some((value) => String(value ?? "").trim() !== "")) {
+      lastUsedRow = index + 1;
+    }
+  });
+
+  return Math.max(lastUsedRow + 1, 2);
 }
 
 export async function appendDigitalLeadImport(
@@ -2590,43 +2644,30 @@ export async function appendDigitalLeadImport(
     throw new Error("At least one entry is required.");
   }
 
-  const headers = await ensureDataSheetHeaders();
+  await ensureDataSheetHeaders();
   const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
   const spreadsheetId = getSpreadsheetId();
   const importedAt = new Date().toISOString();
+  const startRow = await getNextDigitalDataRow();
 
-  const values = entries.map((entry) =>
-    headers.map((header) => {
-      switch (header) {
-        case "Report Type":
-          return DIGITAL_REPORT_TYPE;
-        case "Report Brand":
-          return "redwing";
-        case "Report Date":
-          return normalizeDigitalDate(entry.date);
-        case "Actual":
-          return normalizeDigitalMetric(entry.actual);
-        case "Contacted":
-          return normalizeDigitalMetric(entry.contacted);
-        case "Non Contacted":
-          return normalizeDigitalMetric(entry.nonContacted);
-        case "Interested":
-          return normalizeDigitalMetric(entry.interested);
-        case "Prompt Used":
-          return promptUsed;
-        case "Imported At":
-          return importedAt;
-        default:
-          return "";
-      }
-    }),
-  );
+  const values = entries.map((entry) => [
+    DIGITAL_REPORT_TYPE,
+    "redwing",
+    normalizeDigitalDate(entry.date),
+    normalizeDigitalMetric(entry.actual),
+    normalizeDigitalMetric(entry.contacted),
+    normalizeDigitalMetric(entry.nonContacted),
+    normalizeDigitalMetric(entry.interested),
+    promptUsed,
+    importedAt,
+  ]);
 
-  await sheets.spreadsheets.values.append({
+  const endRow = startRow + values.length - 1;
+
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${DATA_SHEET_TITLE}!A:ZZ`,
+    range: `${DATA_SHEET_TITLE}!F${startRow}:N${endRow}`,
     valueInputOption: "RAW",
-    insertDataOption: "INSERT_ROWS",
     requestBody: {
       values,
     },

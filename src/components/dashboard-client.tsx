@@ -99,6 +99,7 @@ type PlatformDatum = {
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
 const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
+const META_SPEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
 type FilterSelectProps = {
   disabled?: boolean;
@@ -565,6 +566,12 @@ export function DashboardClient({
   const [metaSpend, setMetaSpend] = React.useState<MetaSpendSummary | null>(null);
   const [metaSpendError, setMetaSpendError] = React.useState<string | null>(null);
   const [isMetaSpendLoading, setIsMetaSpendLoading] = React.useState(false);
+  const metaSpendCacheRef = React.useRef(
+    new Map<
+      string,
+      { data: MetaSpendSummary | null; error: string | null; fetchedAt: number }
+    >(),
+  );
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -783,6 +790,21 @@ export function DashboardClient({
     [selectedTabs, workbook.campaignAliasesByTab],
   );
 
+  const metaSpendRequestKey = React.useMemo(() => {
+    if (!metaSpendDateRange) {
+      return "";
+    }
+
+    return JSON.stringify({
+      campaigns: selectedCampaignRequests.map((campaign) => ({
+        aliases: campaign.aliases,
+        label: campaign.label,
+      })),
+      from: metaSpendDateRange.from,
+      to: metaSpendDateRange.to,
+    });
+  }, [metaSpendDateRange, selectedCampaignRequests]);
+
   React.useEffect(() => {
     if (!metaSpendDateRange) {
       setMetaSpend(null);
@@ -792,11 +814,29 @@ export function DashboardClient({
     }
 
     const activeDateRange = metaSpendDateRange;
+    const activeCampaignRequests = selectedCampaignRequests;
+    const activeRequestKey = metaSpendRequestKey;
     const controller = new AbortController();
+    let isDisposed = false;
 
-    async function loadMetaSpend() {
+    async function loadMetaSpend({ force = false }: { force?: boolean } = {}) {
+      const cachedEntry = metaSpendCacheRef.current.get(activeRequestKey);
+      const isCacheFresh =
+        !force &&
+        cachedEntry &&
+        Date.now() - cachedEntry.fetchedAt < META_SPEND_REFRESH_INTERVAL_MS;
+
+      if (isCacheFresh) {
+        setMetaSpend(cachedEntry.data);
+        setMetaSpendError(cachedEntry.error);
+        setIsMetaSpendLoading(false);
+        return;
+      }
+
       try {
-        setMetaSpend(null);
+        if (!cachedEntry) {
+          setMetaSpend(null);
+        }
         setMetaSpendError(null);
         setIsMetaSpendLoading(true);
 
@@ -806,7 +846,7 @@ export function DashboardClient({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            campaigns: selectedCampaignRequests,
+            campaigns: activeCampaignRequests,
             from: activeDateRange.from,
             to: activeDateRange.to,
           }),
@@ -821,7 +861,7 @@ export function DashboardClient({
           throw new Error(data?.error || "Unable to fetch Meta spend right now.");
         }
 
-        setMetaSpend({
+        const nextMetaSpend: MetaSpendSummary = {
           campaigns: Array.isArray(data.campaigns)
             ? data.campaigns.map((campaign) => ({
                 cpc: Number(campaign?.cpc ?? 0),
@@ -842,21 +882,44 @@ export function DashboardClient({
           matchedCampaigns: Number(data.matchedCampaigns ?? 0),
           requestedCampaigns: Number(data.requestedCampaigns ?? 0),
           totalSpend: Number(data.totalSpend ?? 0),
+        };
+
+        metaSpendCacheRef.current.set(activeRequestKey, {
+          data: nextMetaSpend,
+          error: null,
+          fetchedAt: Date.now(),
         });
+
+        if (isDisposed) {
+          return;
+        }
+
+        setMetaSpend(nextMetaSpend);
         setMetaSpendError(null);
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
           return;
         }
 
-        setMetaSpend(null);
-        setMetaSpendError(
+        const nextError =
           error instanceof Error
             ? error.message
-            : "Unable to fetch Meta spend right now.",
-        );
+            : "Unable to fetch Meta spend right now.";
+
+        metaSpendCacheRef.current.set(activeRequestKey, {
+          data: null,
+          error: nextError,
+          fetchedAt: Date.now(),
+        });
+
+        if (isDisposed) {
+          return;
+        }
+
+        setMetaSpend(null);
+        setMetaSpendError(nextError);
       } finally {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !isDisposed) {
           setIsMetaSpendLoading(false);
         }
       }
@@ -864,10 +927,16 @@ export function DashboardClient({
 
     void loadMetaSpend();
 
+    const refreshInterval = setInterval(() => {
+      void loadMetaSpend({ force: true });
+    }, META_SPEND_REFRESH_INTERVAL_MS);
+
     return () => {
+      isDisposed = true;
       controller.abort();
+      clearInterval(refreshInterval);
     };
-  }, [metaSpendDateRange, selectedCampaignRequests]);
+  }, [metaSpendDateRange, metaSpendRequestKey, selectedCampaignRequests]);
 
   const matchedCampaigns = metaSpend?.campaigns ?? [];
   const metaCpcTotal = matchedCampaigns.reduce(
