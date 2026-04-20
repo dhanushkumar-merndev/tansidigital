@@ -20,6 +20,7 @@ type DataSheetConfig = {
   brandByTab: Map<string, ConcreteBrand>;
   campaignAliasesByTab: Map<string, string[]>;
   canonicalTabByLookup: Map<string, string>;
+  tabLabels: Map<string, string>;
   leadTableColumns: LeadTableColumn[];
   leadCountByTab: Map<string, number>;
   leadCountSignature: string;
@@ -39,6 +40,7 @@ type WorkbookSnapshot = {
   leadCountByTab: Record<string, number>;
   brandByTab: Record<string, ConcreteBrand>;
   canonicalTabByLookup: Record<string, string>;
+  tabLabels: Record<string, string>;
   sheetTitleByTab: Record<string, string>;
   tabs: string[];
   rowsByTab: Record<string, DashboardRow[]>;
@@ -71,6 +73,7 @@ export type WorkbookData = {
   tabs: string[];
   rows: DashboardRow[];
   digitalLeads: DigitalLeadImportEntry[];
+  tabLabels: Record<string, string>;
   leadTableColumns: LeadTableColumn[];
   error?: string;
 };
@@ -175,13 +178,13 @@ export type DashboardData = {
   redwingLocationLabels: string[];
   tabs: string[];
   tabBrandLookup: Record<string, ConcreteBrand>;
+  tabLabels: Record<string, string>;
   dailySummaries: DashboardDailySummary[];
   error?: string;
 };
 
 const DATA_SHEET_TITLE = "DATA";
 const DIGITAL_REPORT_TYPE = "redwing_digital_leads";
-const DASHBOARD_SUMMARY_REPORT_TYPE = "dashboard_daily_summary";
 const DEFAULT_REDWING_LOCATION_LABELS = [
   "gunjur",
   "whitefield",
@@ -193,6 +196,8 @@ const DEFAULT_REDWING_LOCATION_LABELS = [
 ];
 const LEADS_PAGE_SIZE = 100;
 const SNAPSHOT_SOURCE_PATH = path.join(process.cwd(), "data", "workbook-snapshot.json");
+const IS_CLOUD_ENVIRONMENT = process.env.NODE_ENV === "production" || !!process.env.VERCEL || !!process.env.AWS_REGION;
+
 const SNAPSHOT_RUNTIME_PATH = (() => {
   const configuredPath = process.env.WORKBOOK_SNAPSHOT_PATH?.trim();
   if (configuredPath) {
@@ -201,7 +206,7 @@ const SNAPSHOT_RUNTIME_PATH = (() => {
       : path.join(process.cwd(), configuredPath);
   }
 
-  if (process.env.NODE_ENV === "production") {
+  if (IS_CLOUD_ENVIRONMENT) {
     return path.join("/tmp", "workbook-snapshot.json");
   }
 
@@ -217,7 +222,7 @@ const LEADS_INDEX_RUNTIME_PATH = (() => {
       : path.join(process.cwd(), configuredPath);
   }
 
-  if (process.env.NODE_ENV === "production") {
+  if (IS_CLOUD_ENVIRONMENT) {
     return path.join("/tmp", "workbook-leads.sqlite");
   }
 
@@ -1026,6 +1031,7 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
   const brandByTab = new Map<string, ConcreteBrand>();
   const campaignAliasesByTab = new Map<string, string[]>();
   const canonicalTabByLookup = new Map<string, string>();
+  const tabLabels = new Map<string, string>();
   const leadTableColumns: LeadTableColumn[] = [];
   const leadCountByTab = new Map<string, number>();
   const redwingLocationLabels = new Set<string>();
@@ -1037,6 +1043,7 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
       brandByTab,
       campaignAliasesByTab,
       canonicalTabByLookup,
+      tabLabels,
       leadTableColumns,
       leadCountByTab,
       leadCountSignature: "",
@@ -1076,7 +1083,11 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
     ]);
 
     if (tabName && brand) {
-      tabs.add(expandAliases(tabName));
+      const expandedTab = expandAliases(tabName);
+      tabs.add(expandedTab);
+      if (tabAliases) {
+        tabLabels.set(expandedTab, tabAliases.trim());
+      }
       addBrandMappingEntry(brandByTab, brand, tabName);
       addCanonicalTabEntry(canonicalTabByLookup, tabName, tabName);
       addCampaignAliasEntry(campaignAliasesByTab, tabName, tabName);
@@ -1114,6 +1125,7 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
     brandByTab,
     campaignAliasesByTab,
     canonicalTabByLookup,
+    tabLabels,
     leadTableColumns,
     leadCountByTab,
     leadCountSignature,
@@ -1403,7 +1415,8 @@ function buildWorkbookSnapshot(
     leadCountByTab: mapToRecord(dataSheetConfig.leadCountByTab),
     brandByTab: mapToRecord(dataSheetConfig.brandByTab),
     canonicalTabByLookup: mapToRecord(dataSheetConfig.canonicalTabByLookup),
-    sheetTitleByTab,
+    tabLabels: mapToRecord(dataSheetConfig.tabLabels || new Map()),
+    sheetTitleByTab: sheetTitleByTab,
     tabs,
     rowsByTab,
     digitalLeads: parseDigitalLeadEntries(
@@ -1422,7 +1435,8 @@ function buildWorkbookDataFromSnapshot(snapshot: WorkbookSnapshot): WorkbookData
     sheetId: spreadsheetId,
     defaultTabName,
     tabs: snapshot.tabs,
-    rows,
+    tabLabels: snapshot.tabLabels || {},
+    rows: rows,
     digitalLeads: snapshot.digitalLeads,
     leadTableColumns: snapshot.leadTableColumns,
   };
@@ -2091,6 +2105,7 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
       tabs: [],
       rows: [],
       digitalLeads: [],
+      tabLabels: {},
       leadTableColumns: [],
       error: message,
     };
@@ -2110,6 +2125,7 @@ async function fetchDashboardDataInternal(): Promise<DashboardData> {
       leadCountByTab: mapToRecord(dataSheetConfig.leadCountByTab),
       redwingLocationLabels: dataSheetConfig.redwingLocationLabels,
       tabs: dataSheetConfig.tabs,
+      tabLabels: Object.fromEntries(dataSheetConfig.tabLabels.entries()),
       tabBrandLookup: buildTabBrandLookup(dataSheetConfig),
       dailySummaries,
     };
@@ -2124,6 +2140,7 @@ async function fetchDashboardDataInternal(): Promise<DashboardData> {
       redwingLocationLabels: DEFAULT_REDWING_LOCATION_LABELS,
       tabs: [],
       tabBrandLookup: {},
+      tabLabels: {},
       dailySummaries: [],
       error: message,
     };
@@ -2173,6 +2190,7 @@ async function refreshSnapshotByAppend(
     brandByTab: recordToMap(snapshot.brandByTab),
     campaignAliasesByTab: new Map(),
     canonicalTabByLookup: recordToMap(snapshot.canonicalTabByLookup),
+    tabLabels: recordToMap(snapshot.tabLabels),
     leadTableColumns: snapshot.leadTableColumns,
     leadCountByTab: leadCountState.countByTab,
     leadCountSignature: leadCountState.signature,

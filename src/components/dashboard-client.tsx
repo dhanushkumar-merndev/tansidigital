@@ -911,7 +911,8 @@ export function DashboardClient({
     } from Meta`;
 
     if (unmatched.length > 0 && unmatched.length < selectedTabs.length) {
-      hint += ` (Missing: ${unmatched.join(", ")})`;
+      const unmatchedLabels = unmatched.map(tab => workbook.tabLabels?.[tab] || tab);
+      hint += ` (Missing: ${unmatchedLabels.join(", ")})`;
     }
 
     return hint;
@@ -1207,15 +1208,10 @@ export function DashboardClient({
         leads,
         location: formatChartLocationLabel(location),
       }))
-      .filter((item) => item.leads > 0)
       .sort((left, right) => right.leads - left.leads);
   }, [aggregatedRedwingLocationsByTab, selectedRedwingTabs, workbook.redwingLocationLabels]);
 
   const activeBrandAssets = getBrandAssets(brand);
-  const latestSummaryDate =
-    filteredDashboardSummaries.at(-1)?.date ??
-    workbook.dailySummaries.at(-1)?.date ??
-    null;
   const leadsPageHref = `/leads?brand=${brand === "all" ? "bigwing" : brand}`;
   const dashboardBackground =
     brand === "bigwing" ? "#000000" : "#0D4D8B";
@@ -1410,7 +1406,7 @@ export function DashboardClient({
                   {brand === "all" ? "Combined Dashboard" : `${activeBrandAssets.label} Dashboard`}
                 </div>
                 <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-                  Campaign analytics
+                  {campaignFilter !== "all" ? (workbook.tabLabels?.[campaignFilter] || campaignFilter) : "Campaign analytics"}
                 </h1>
                 <p className="mt-1 max-w-3xl text-xs text-white/68 sm:mt-2 sm:text-sm">
                   Live analytics hub integrating Meta spend and Google Sheets lead
@@ -1490,7 +1486,7 @@ export function DashboardClient({
               options={[
                 { value: "all", label: "All campaigns" },
                 ...campaignOptions.map((campaign) => ({
-                  label: campaign,
+                  label: workbook.tabLabels?.[campaign] || campaign,
                   value: campaign,
                 })),
               ]}
