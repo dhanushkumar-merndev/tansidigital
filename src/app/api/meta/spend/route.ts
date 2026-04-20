@@ -9,6 +9,13 @@ type SpendBody = {
   to?: unknown;
 };
 
+type RequestedCampaign = {
+  aliases: string[];
+  aliasKeys: string[];
+  key: string;
+  label: string;
+};
+
 function normalizeCampaignKey(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -17,38 +24,112 @@ function isValidDateValue(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function normalizeCampaigns(input: unknown) {
+function normalizeRequestedCampaigns(input: unknown): RequestedCampaign[] {
   if (!Array.isArray(input)) {
     return [];
   }
 
-  return Array.from(
-    new Set(
-      input
-        .filter((value): value is string => typeof value === "string")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-  ).slice(0, 250);
-}
+  const requestedCampaigns: RequestedCampaign[] = [];
+  const seen = new Set<string>();
 
-function matchesCampaign(requestedCampaigns: Set<string>, campaignName: string) {
-  const normalizedCampaignName = normalizeCampaignKey(campaignName);
+  for (const item of input) {
+    let label = "";
+    let aliases: string[] = [];
 
-  if (requestedCampaigns.has(normalizedCampaignName)) {
-    return true;
+    if (typeof item === "string") {
+      label = item.trim();
+      aliases = label ? [label] : [];
+    } else if (item && typeof item === "object") {
+      const candidate = item as {
+        aliases?: unknown;
+        label?: unknown;
+        name?: unknown;
+      };
+      label =
+        typeof candidate.label === "string"
+          ? candidate.label.trim()
+          : typeof candidate.name === "string"
+            ? candidate.name.trim()
+            : "";
+      aliases = Array.isArray(candidate.aliases)
+        ? candidate.aliases
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [];
+    }
+
+    if (!label) {
+      continue;
+    }
+
+    const mergedAliases = Array.from(new Set([label, ...aliases]));
+    const aliasKeys = mergedAliases.map((value) => normalizeCampaignKey(value));
+    const key = normalizeCampaignKey(label);
+
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    requestedCampaigns.push({
+      aliases: mergedAliases,
+      aliasKeys,
+      key,
+      label,
+    });
   }
 
+  return requestedCampaigns.slice(0, 250);
+}
+
+function matchesCampaign(requestedCampaigns: RequestedCampaign[], campaignName: string) {
+  const normalizedCampaignName = normalizeCampaignKey(campaignName);
+
   for (const requestedCampaign of requestedCampaigns) {
-    if (
-      normalizedCampaignName.includes(requestedCampaign) ||
-      requestedCampaign.includes(normalizedCampaignName)
-    ) {
-      return true;
+    for (const aliasKey of requestedCampaign.aliasKeys) {
+      if (
+        aliasKey === normalizedCampaignName ||
+        normalizedCampaignName.includes(aliasKey) ||
+        aliasKey.includes(normalizedCampaignName)
+      ) {
+        return true;
+      }
     }
   }
 
   return false;
+}
+
+function findBestCampaignMatch(
+  requestedCampaigns: RequestedCampaign[],
+  campaignName: string,
+) {
+  const normalizedCampaignName = normalizeCampaignKey(campaignName);
+  const exactMatch = requestedCampaigns.find(
+    (campaign) => campaign.aliasKeys.includes(normalizedCampaignName),
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const partialMatches = requestedCampaigns
+    .filter(
+      (campaign) =>
+        campaign.aliasKeys.some(
+          (aliasKey) =>
+            normalizedCampaignName.includes(aliasKey) ||
+            aliasKey.includes(normalizedCampaignName),
+        ),
+    )
+    .sort((left, right) => {
+      const longestLeft = Math.max(...left.aliasKeys.map((aliasKey) => aliasKey.length));
+      const longestRight = Math.max(...right.aliasKeys.map((aliasKey) => aliasKey.length));
+      return longestRight - longestLeft;
+    });
+
+  return partialMatches[0] ?? null;
 }
 
 export async function POST(request: Request) {
@@ -59,7 +140,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as SpendBody | null;
   const from = typeof body?.from === "string" ? body.from.trim() : "";
   const to = typeof body?.to === "string" ? body.to.trim() : "";
-  const campaigns = normalizeCampaigns(body?.campaigns);
+  const requestedCampaigns = normalizeRequestedCampaigns(body?.campaigns);
 
   if (!isValidDateValue(from) || !isValidDateValue(to)) {
     return NextResponse.json(
@@ -72,17 +153,19 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       configured: false,
+      campaigns: [],
       currency: "INR",
       matchedCampaigns: 0,
-      requestedCampaigns: campaigns.length,
+      requestedCampaigns: requestedCampaigns.length,
       totalSpend: 0,
     });
   }
 
-  if (campaigns.length === 0) {
+  if (requestedCampaigns.length === 0) {
     return NextResponse.json({
       ok: true,
       configured: true,
+      campaigns: [],
       currency: "INR",
       matchedCampaigns: 0,
       requestedCampaigns: 0,
@@ -91,28 +174,55 @@ export async function POST(request: Request) {
   }
 
   try {
-    const requestedCampaigns = new Set(campaigns.map((campaign) => normalizeCampaignKey(campaign)));
     const spendRows = await fetchMetaCampaignSpend({ from, to });
     let currency = "INR";
     let totalSpend = 0;
-    const matchedCampaigns = new Set<string>();
+    const spendByCampaign = new Map<
+      string,
+      { name: string; spend: number; cpc: number; currency: string }
+    >();
 
     for (const row of spendRows) {
-      if (!row.campaignName || !matchesCampaign(requestedCampaigns, row.campaignName)) {
+      if (
+        !row.campaignName ||
+        !matchesCampaign(requestedCampaigns, row.campaignName)
+      ) {
+        continue;
+      }
+
+      const matchedCampaign = findBestCampaignMatch(
+        requestedCampaigns,
+        row.campaignName,
+      );
+      if (!matchedCampaign) {
         continue;
       }
 
       totalSpend += row.spend;
       currency = row.accountCurrency || currency;
-      matchedCampaigns.add(normalizeCampaignKey(row.campaignName));
+
+      const existingCampaign =
+        spendByCampaign.get(matchedCampaign.key) ?? {
+          name: matchedCampaign.label,
+          cpc: 0,
+          spend: 0,
+          currency: row.accountCurrency || "INR",
+        };
+      existingCampaign.cpc += row.cpc;
+      existingCampaign.spend += row.spend;
+      existingCampaign.currency = row.accountCurrency || existingCampaign.currency;
+      spendByCampaign.set(matchedCampaign.key, existingCampaign);
     }
 
     return NextResponse.json({
       ok: true,
       configured: true,
+      campaigns: Array.from(spendByCampaign.values()).sort(
+        (left, right) => right.spend - left.spend,
+      ),
       currency,
-      matchedCampaigns: matchedCampaigns.size,
-      requestedCampaigns: campaigns.length,
+      matchedCampaigns: spendByCampaign.size,
+      requestedCampaigns: requestedCampaigns.length,
       totalSpend,
     });
   } catch (error) {

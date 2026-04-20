@@ -1,6 +1,6 @@
 "use client";
 
-import { endOfDay, isAfter, isBefore, startOfDay } from "date-fns";
+import { addDays, endOfDay, isAfter, isBefore, startOfDay } from "date-fns";
 import {
   Bar,
   BarChart,
@@ -18,15 +18,13 @@ import {
 } from "recharts";
 import {
   ChevronDown,
-  Clipboard,
   CircleAlert,
+  Clipboard,
   FileUp,
   IndianRupee,
   KeyRound,
-  Layers3,
   LoaderCircle,
   LogOut,
-  RefreshCw,
   Search,
   Sparkles,
   Target,
@@ -43,43 +41,27 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { BRAND_CONFIG, getBrandAssets, type Brand } from "@/lib/brands";
-import type { DashboardRow, WorkbookData } from "@/lib/sheets";
+import type {
+  DashboardData,
+  DashboardDailySummary,
+  DashboardPlatformCounts,
+  DigitalLeadImportMeta,
+} from "@/lib/sheets";
 
 type DashboardClientProps = {
-  workbook: WorkbookData;
+  workbook: DashboardData;
   initialBrand: Brand;
 };
 
-type Summary = {
-  totalLeads: number;
-  uniquePhones: number;
-  campaigns: number;
-  tabs: number;
-};
-
-type TimelineDatum = {
-  date: string;
-  label: string;
-  tooltipLabel: string;
-  tooltipHeading: string;
-  leads: number;
-  bigwingLeads: number;
-  redwingLeads: number;
-};
-
-type PlatformDatum = {
+type MetaCampaignSpend = {
+  cpc: number;
+  currency: string;
   name: string;
-  value: number;
-  bigwingValue: number;
-  redwingValue: number;
-};
-
-type DigitalLeadImportMeta = {
-  lastImportedDate: string | null;
-  prompt: string;
+  spend: number;
 };
 
 type MetaSpendSummary = {
+  campaigns: MetaCampaignSpend[];
   configured: boolean;
   currency: string;
   matchedCampaigns: number;
@@ -87,28 +69,61 @@ type MetaSpendSummary = {
   totalSpend: number;
 };
 
-const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
-const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
-const AUTO_REFRESH_INTERVAL_MS = 30_000;
-const AUTO_REFRESH_THROTTLE_MS = 15_000;
-
-type FilterSelectProps = {
-  id: string;
+type DashboardCard = {
+  hint: string;
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-  disabled?: boolean;
 };
 
-function FilterSelect({ id, label, value, options, onChange, disabled = false }: FilterSelectProps) {
+type TimelineDatum = {
+  bigwingLeads: number;
+  date: string;
+  label: string;
+  leads: number;
+  redwingLeads: number;
+  tooltipHeading: string;
+  tooltipLabel: string;
+};
+
+type PlatformDatum = {
+  bigwingValue: number;
+  name: string;
+  redwingValue: number;
+  value: number;
+};
+
+const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
+const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
+
+type FilterSelectProps = {
+  disabled?: boolean;
+  id: string;
+  label: string;
+  onChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  value: string;
+};
+
+function FilterSelect({
+  id,
+  label,
+  value,
+  options,
+  onChange,
+  disabled = false,
+}: FilterSelectProps) {
   const [open, setOpen] = React.useState(false);
-  const selectedLabel = options.find((option) => option.value === value)?.label ?? label;
+  const selectedLabel =
+    options.find((option) => option.value === value)?.label ?? label;
 
   return (
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Popover open={disabled ? false : open} onOpenChange={disabled ? undefined : setOpen}>
+      <Popover
+        open={disabled ? false : open}
+        onOpenChange={disabled ? undefined : setOpen}
+      >
         <PopoverTrigger asChild>
           <button
             id={id}
@@ -121,7 +136,9 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
             }
           >
             <span className="truncate">{selectedLabel}</span>
-            {disabled ? null : <ChevronDown className="ml-4 h-4 w-4 shrink-0 text-white/72" />}
+            {disabled ? null : (
+              <ChevronDown className="ml-4 h-4 w-4 shrink-0 text-white/72" />
+            )}
           </button>
         </PopoverTrigger>
         <PopoverContent
@@ -162,95 +179,22 @@ function FilterSelect({ id, label, value, options, onChange, disabled = false }:
   );
 }
 
-type AdNameSearchInputProps = {
-  id: string;
-  suggestions: string[];
-  onSearchChange: (value: string) => void;
-};
-
-const AdNameSearchInput = React.memo(function AdNameSearchInput({
-  id,
-  suggestions,
-  onSearchChange,
-}: AdNameSearchInputProps) {
-  const [inputValue, setInputValue] = React.useState("");
-  const deferredInputValue = React.useDeferredValue(inputValue);
-  const autocompleteSuggestion = React.useMemo(
-    () => findAutocompleteSuggestion(suggestions, inputValue),
-    [inputValue, suggestions],
-  );
-
-  React.useEffect(() => {
-    onSearchChange(deferredInputValue);
-  }, [deferredInputValue, onSearchChange]);
-
-  function acceptAutocompleteSuggestion() {
-    if (!autocompleteSuggestion) return;
-    setInputValue(autocompleteSuggestion);
-  }
-
-  function acceptAutocompleteWord() {
-    if (!autocompleteSuggestion) return;
-
-    const nextChunk = getAutocompleteWordChunk(autocompleteSuggestion, inputValue);
-    if (!nextChunk) return;
-
-    setInputValue(`${inputValue}${nextChunk}`);
-  }
-
+function DisabledAdNameSearchInput({ id }: { id: string }) {
   return (
     <Field>
       <FieldLabel htmlFor={id}>Search Ad Name</FieldLabel>
-      <div className="relative h-[48px] rounded-[22px] border border-white/16 bg-white/10">
-        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/44" />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 right-4 left-11 flex items-center overflow-hidden text-md leading-none"
-        >
-          {inputValue ? (
-            <>
-              <span className="whitespace-pre text-white">{inputValue}</span>
-              {autocompleteSuggestion ? (
-                <span className="truncate whitespace-pre text-white/38">
-                  {autocompleteSuggestion.slice(inputValue.length)}
-                </span>
-              ) : null}
-            </>
-          ) : null}
-        </div>
+      <div className="relative h-[48px] rounded-[22px] border border-white/10 bg-white/6">
+        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
         <input
           id={id}
-          name={id}
-          type="text"
-          value={inputValue}
-          onChange={(event) => setInputValue(event.target.value)}
-          onKeyDown={(event) => {
-            const selectionAtEnd =
-              event.currentTarget.selectionStart === event.currentTarget.value.length &&
-              event.currentTarget.selectionEnd === event.currentTarget.value.length;
-
-            if (!autocompleteSuggestion || !selectionAtEnd) return;
-
-            if (event.key === "Enter" || event.key === "Tab" || event.key === "ArrowRight") {
-              event.preventDefault();
-              acceptAutocompleteSuggestion();
-              return;
-            }
-
-            if (event.key === " ") {
-              event.preventDefault();
-              acceptAutocompleteWord();
-            }
-          }}
-          placeholder="Type ad name..."
-          autoComplete="off"
-          spellCheck={false}
-          className="relative z-10 h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm leading-none text-transparent caret-white outline-none placeholder:text-white/34"
+          disabled
+          placeholder="Ad-level filter unavailable in DATA summary mode"
+          className="h-[48px] w-full rounded-[22px] bg-transparent pl-11 pr-4 text-sm text-white/42 outline-none placeholder:text-white/34"
         />
       </div>
     </Field>
   );
-});
+}
 
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -268,11 +212,17 @@ function formatCurrencyAmount(value: number, currency = "INR") {
   }).format(value);
 }
 
-function renderTooltipRow(label: string, value: number, accentClass = "text-white") {
+function renderTooltipRow(
+  label: string,
+  value: number,
+  accentClass = "text-white",
+) {
   return (
     <div className="flex items-center justify-between gap-6 text-sm">
       <span className="text-white/68">{label}</span>
-      <span className={`font-semibold tabular-nums ${accentClass}`}>{formatCompactNumber(value)}</span>
+      <span className={`font-semibold tabular-nums ${accentClass}`}>
+        {formatCompactNumber(value)}
+      </span>
     </div>
   );
 }
@@ -283,8 +233,8 @@ function TimelineTooltip({
   activeBrand,
 }: {
   active?: boolean;
-  payload?: Array<{ payload: TimelineDatum }>;
   activeBrand: Brand;
+  payload?: Array<{ payload: TimelineDatum }>;
 }) {
   if (!active || !payload?.length) return null;
 
@@ -294,15 +244,21 @@ function TimelineTooltip({
   const tooltipBg = activeBrand === "bigwing" ? "bg-[#1a1a1a]/95" : "bg-[#1e3f62]/95";
 
   return (
-    <div className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}>
+    <div
+      className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}
+    >
       <div className="pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
         {point.tooltipHeading}
       </div>
       <div className="text-base font-bold text-white">{point.tooltipLabel}</div>
       <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-        {activeBrand !== "redwing" ? renderTooltipRow("Bigwing", point.bigwingLeads, "text-white") : null}
-        {activeBrand !== "bigwing" ? renderTooltipRow("Redwing", point.redwingLeads, "text-white") : null}
-        {renderTooltipRow("Total", point.leads, "text-white")}
+        {activeBrand !== "redwing"
+          ? renderTooltipRow("Bigwing", point.bigwingLeads)
+          : null}
+        {activeBrand !== "bigwing"
+          ? renderTooltipRow("Redwing", point.redwingLeads)
+          : null}
+        {renderTooltipRow("Total", point.leads)}
       </div>
     </div>
   );
@@ -314,8 +270,8 @@ function PlatformTooltip({
   activeBrand,
 }: {
   active?: boolean;
-  payload?: Array<{ payload: PlatformDatum }>;
   activeBrand: Brand;
+  payload?: Array<{ payload: PlatformDatum }>;
 }) {
   if (!active || !payload?.length) return null;
 
@@ -325,15 +281,21 @@ function PlatformTooltip({
   const tooltipBg = activeBrand === "bigwing" ? "bg-[#1a1a1a]/95" : "bg-[#1e3f62]/95";
 
   return (
-    <div className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}>
+    <div
+      className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}
+    >
       <div className="pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
         Platform / Source
       </div>
       <div className="text-base font-bold text-white">{point.name}</div>
       <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-        {activeBrand !== "redwing" ? renderTooltipRow("Bigwing", point.bigwingValue, "text-white") : null}
-        {activeBrand !== "bigwing" ? renderTooltipRow("Redwing", point.redwingValue, "text-white") : null}
-        {renderTooltipRow("Total", point.value, "text-white")}
+        {activeBrand !== "redwing"
+          ? renderTooltipRow("Bigwing", point.bigwingValue)
+          : null}
+        {activeBrand !== "bigwing"
+          ? renderTooltipRow("Redwing", point.redwingValue)
+          : null}
+        {renderTooltipRow("Total", point.value)}
       </div>
     </div>
   );
@@ -347,10 +309,10 @@ function GlassMetricTooltip({
   activeBrand,
 }: {
   active?: boolean;
-  label?: string | number;
-  payload?: Array<{ value?: number; name?: string }>;
-  labelHeading: string;
   activeBrand?: Brand;
+  label?: string | number;
+  labelHeading: string;
+  payload?: Array<{ value?: number; name?: string }>;
 }) {
   if (!active || !payload?.length) return null;
 
@@ -360,50 +322,35 @@ function GlassMetricTooltip({
   const tooltipBg = activeBrand === "bigwing" ? "bg-[#1a1a1a]/95" : "bg-[#1e3f62]/95";
 
   return (
-    <div className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}>
+    <div
+      className={`min-w-[200px] rounded-[22px] border border-white/24 ${tooltipBg} px-5 py-4 text-white shadow-[0_8px_32px_rgba(255,255,255,0.08),0_20px_60px_rgba(0,0,0,0.35)] ring-0 backdrop-blur-2xl`}
+    >
       <div className="pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
         {labelHeading}
       </div>
       <div className="text-base font-bold text-white">{label}</div>
       <div className="mt-3 border-t border-white/10 pt-3">
-        {renderTooltipRow(valueLabel, value, "text-white")}
+        {renderTooltipRow(valueLabel, value)}
       </div>
     </div>
   );
 }
 
-function findAutocompleteSuggestion(options: string[], query: string) {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery) return "";
-
-  const normalizedQuery = trimmedQuery.toLowerCase();
-  const searchableQuery = normalizedQuery.replace(/[^a-z0-9]+/g, "");
-
-  return (
-    options.find((option) => {
-      const normalizedOption = option.toLowerCase();
-      const searchableOption = normalizedOption.replace(/[^a-z0-9]+/g, "");
-
-      return (
-        searchableOption.startsWith(searchableQuery) &&
-        searchableOption !== searchableQuery &&
-        normalizedOption !== normalizedQuery
-      );
-    }) ?? ""
-  );
-}
-
-function getAutocompleteWordChunk(suggestion: string, query: string) {
-  if (!suggestion || suggestion.length <= query.length) return "";
-
-  const remainingSuggestion = suggestion.slice(query.length);
-  const nextWordMatch = remainingSuggestion.match(/^\S+\s*/);
-
-  return nextWordMatch?.[0] ?? remainingSuggestion;
-}
-
 function parseDate(date: string | null) {
   return date ? new Date(`${date}T00:00:00`) : null;
+}
+
+function buildDateKeysInRange(from: Date, to: Date) {
+  const keys: string[] = [];
+  let cursor = startOfDay(from);
+  const end = startOfDay(to);
+
+  while (!isAfter(cursor, end)) {
+    keys.push(getIstDateKey(cursor));
+    cursor = addDays(cursor, 1);
+  }
+
+  return keys;
 }
 
 function getIstDateKey(date: Date) {
@@ -413,37 +360,6 @@ function getIstDateKey(date: Date) {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
-}
-
-function getRowIstDate(row: DashboardRow) {
-  const timestamp = getRowTimestamp(row);
-  if (timestamp) {
-    return getIstDateKey(timestamp);
-  }
-
-  return row.date;
-}
-
-function getRowTimestampValue(row: DashboardRow) {
-  return (
-    row.raw.created_time ||
-    row.raw.date ||
-    row.raw.day ||
-    row.raw.reporting_starts ||
-    row.raw.start_date ||
-    row.date ||
-    ""
-  );
-}
-
-function getRowTimestamp(row: DashboardRow) {
-  const rawValue = getRowTimestampValue(row).trim();
-  if (!rawValue) return null;
-
-  const parsed = new Date(rawValue);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  return parsed;
 }
 
 function formatHourLabel(hour: number) {
@@ -460,71 +376,12 @@ function formatHourTooltipLabel(hour: number) {
   return `${displayHour}:00 ${period}`;
 }
 
-function getIstHourKey(date: Date) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
+function parseHourValue(value: string) {
+  const match = value.trim().match(/^(\d{1,2})/);
+  if (!match) return null;
 
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day} ${values.hour}`;
-}
-
-function getIstHourNumber(date: Date) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-
-  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
-  return Number(hour);
-}
-
-function isRowInIstDate(row: DashboardRow, targetIstDate: string) {
-  const rawValue = getRowTimestampValue(row).trim();
-  if (!rawValue) return false;
-
-  const direct = new Date(rawValue);
-  if (!Number.isNaN(direct.getTime())) {
-    return getIstDateKey(direct) === targetIstDate;
-  }
-
-  const normalizedDate = row.date;
-  return normalizedDate === targetIstDate;
-}
-
-function getUniquePhoneCampaignCount(rows: DashboardRow[]) {
-  return new Set(
-    rows
-      .filter((row) => row.phoneNumber)
-      .map((row) => `${row.phoneNumber}::${row.campaign || "unknown"}`),
-  ).size;
-}
-
-function getLocationLabel(row: DashboardRow, brand: Brand) {
-  if (row.brand === "bigwing" && row.location === "yes") {
-    return "Bigwing W-field / hoodi";
-  }
-
-  if (row.brand === "bigwing" && row.location === "no") {
-    return "Bigwing others";
-  }
-
-  const location = row.location;
-
-  if (brand !== "all") {
-    return location;
-  }
-
-  const brandLabel =
-    row.brand === "bigwing" ? "bigwing" : row.brand === "redwing" ? "redwing" : "unknown";
-
-  return `${brandLabel} ${location}`;
+  const hour = Number(match[1]);
+  return Number.isFinite(hour) && hour >= 0 && hour <= 23 ? hour : null;
 }
 
 function formatChartLocationLabel(value: string) {
@@ -532,6 +389,7 @@ function formatChartLocationLabel(value: string) {
   if (!trimmed) return "Unknown";
 
   return trimmed
+    .replace(/[_-]+/g, " ")
     .split(/\s+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -548,18 +406,71 @@ function formatCampaignAxisLabel(value: string) {
   return words.map((word) => word.charAt(0).toUpperCase()).join("");
 }
 
-function summarizeRows(rows: DashboardRow[]): Summary {
-  const totalLeads = rows.length;
-  const uniquePhones = getUniquePhoneCampaignCount(rows);
-  const campaigns = new Set(rows.map((row) => row.campaign).filter(Boolean)).size;
-  const tabs = new Set(rows.map((row) => row.tabName).filter(Boolean)).size;
+function aggregateMetricByTab(
+  summaries: DashboardDailySummary[],
+  selector: (summary: DashboardDailySummary) => Record<string, number>,
+) {
+  const totals: Record<string, number> = {};
 
-  return {
-    totalLeads,
-    uniquePhones,
-    campaigns,
-    tabs,
-  };
+  for (const summary of summaries) {
+    for (const [tab, value] of Object.entries(selector(summary))) {
+      totals[tab] = (totals[tab] ?? 0) + value;
+    }
+  }
+
+  return totals;
+}
+
+function aggregatePlatformMetricByTab(summaries: DashboardDailySummary[]) {
+  const totals: Record<string, DashboardPlatformCounts> = {};
+
+  for (const summary of summaries) {
+    for (const [tab, value] of Object.entries(summary.platformCountsByTab)) {
+      const existing = totals[tab] ?? { fb: 0, ig: 0 };
+      totals[tab] = {
+        fb: existing.fb + (value.fb ?? 0),
+        ig: existing.ig + (value.ig ?? 0),
+      };
+    }
+  }
+
+  return totals;
+}
+
+function aggregateResponseMetricByTab(summaries: DashboardDailySummary[]) {
+  const totals: Record<string, { no: number; yes: number }> = {};
+
+  for (const summary of summaries) {
+    for (const [tab, value] of Object.entries(summary.bigwingResponseCountsByTab)) {
+      const existing = totals[tab] ?? { no: 0, yes: 0 };
+      totals[tab] = {
+        no: existing.no + (value.no ?? 0),
+        yes: existing.yes + (value.yes ?? 0),
+      };
+    }
+  }
+
+  return totals;
+}
+
+function aggregateLocationMetricByTab(summaries: DashboardDailySummary[]) {
+  const totals: Record<string, number[]> = {};
+
+  for (const summary of summaries) {
+    for (const [tab, values] of Object.entries(summary.redwingLocationCountsByTab)) {
+      const nextValues = [...(totals[tab] ?? [])];
+      values.forEach((count, index) => {
+        nextValues[index] = (nextValues[index] ?? 0) + count;
+      });
+      totals[tab] = nextValues;
+    }
+  }
+
+  return totals;
+}
+
+function sumTabs(metricByTab: Record<string, number>, tabs: string[]) {
+  return tabs.reduce((total, tab) => total + (metricByTab[tab] ?? 0), 0);
 }
 
 function syncBrandMetadata(brand: Brand) {
@@ -595,22 +506,46 @@ function syncBrandMetadata(brand: Brand) {
     manifest.rel = "manifest";
     document.head.appendChild(manifest);
   }
-manifest.href = `/brand-manifest?brand=${brand}`;
+
+  manifest.href = `/brand-manifest?brand=${brand}`;
 }
 
-export function DashboardClient({ workbook, initialBrand }: DashboardClientProps) {
+export function DashboardClient({
+  workbook,
+  initialBrand,
+}: DashboardClientProps) {
   const [isPending, startTransition] = useTransition();
   const [isBrandPending, startBrandTransition] = useTransition();
   const [isMounted, setIsMounted] = React.useState(false);
   const [isDesktop, setIsDesktop] = React.useState(false);
+  const [brand, setBrand] = React.useState<Brand>(initialBrand);
+  const [campaignFilter, setCampaignFilter] = React.useState("all");
+  const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
+    from: DASHBOARD_RANGE_START,
+    to: new Date(),
+  });
+  const [isDigitalModalOpen, setIsDigitalModalOpen] = React.useState(false);
+  const [digitalPin, setDigitalPin] = React.useState("");
+  const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
+  const [isDigitalLoading, setIsDigitalLoading] = React.useState(false);
+  const [digitalMeta, setDigitalMeta] =
+    React.useState<DigitalLeadImportMeta | null>(null);
+  const [digitalResponseText, setDigitalResponseText] = React.useState("");
+  const [digitalError, setDigitalError] = React.useState<string | null>(null);
+  const [digitalSuccessMessage, setDigitalSuccessMessage] = React.useState("");
+  const [metaSpend, setMetaSpend] = React.useState<MetaSpendSummary | null>(null);
+  const [metaSpendError, setMetaSpendError] = React.useState<string | null>(null);
+  const [isMetaSpendLoading, setIsMetaSpendLoading] = React.useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   React.useEffect(() => {
-    // Increased delay to 300ms to ensure browser layout is fully stable on hard refresh
     const timer = setTimeout(() => {
       setIsMounted(true);
-      // Trigger a resize event to force charts to measure updated layout
       window.dispatchEvent(new Event("resize"));
     }, 300);
+
     return () => clearTimeout(timer);
   }, []);
 
@@ -622,50 +557,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
     updateIsDesktop();
     mediaQuery.addEventListener("change", updateIsDesktop);
-
-    return () => {
-      mediaQuery.removeEventListener("change", updateIsDesktop);
-    };
+    return () => mediaQuery.removeEventListener("change", updateIsDesktop);
   }, []);
-
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const autoRefreshTimestampRef = React.useRef(0);
-  const [brand, setBrand] = React.useState<Brand>(initialBrand);
-  const [campaignFilter, setCampaignFilter] = React.useState("all");
-  const [searchFilter, setSearchFilter] = React.useState("");
-  const normalizedSearchFilter = searchFilter.trim().toLowerCase();
-  const [isDigitalModalOpen, setIsDigitalModalOpen] = React.useState(false);
-  const [digitalPin, setDigitalPin] = React.useState("");
-  const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
-  const [isDigitalLoading, setIsDigitalLoading] = React.useState(false);
-  const [isWorkbookRefreshing, setIsWorkbookRefreshing] = React.useState(false);
-  const [digitalError, setDigitalError] = React.useState<string | null>(null);
-
-  // Lock scroll when digital modal is open
-  React.useEffect(() => {
-    if (isDigitalModalOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "unset";
-    }
-    return () => {
-      document.body.style.overflow = "unset";
-    };
-  }, [isDigitalModalOpen]);
-
-
-  const [digitalMeta, setDigitalMeta] = React.useState<DigitalLeadImportMeta | null>(null);
-  const [digitalResponseText, setDigitalResponseText] = React.useState("");
-  const [digitalSuccessMessage, setDigitalSuccessMessage] = React.useState("");
-  const [metaSpend, setMetaSpend] = React.useState<MetaSpendSummary | null>(null);
-  const [metaSpendError, setMetaSpendError] = React.useState<string | null>(null);
-  const [isMetaSpendLoading, setIsMetaSpendLoading] = React.useState(false);
-  const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
-    from: DASHBOARD_RANGE_START,
-    to: new Date(),
-  });
 
   const updateMetadata = React.useEffectEvent((nextBrand: Brand) => {
     syncBrandMetadata(nextBrand);
@@ -676,139 +569,158 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
   }, [brand]);
 
   React.useEffect(() => {
-    if (brand === "all") {
-      setCampaignFilter("all");
+    if (isDigitalModalOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
     }
-  }, [brand]);
-
-  const requestWorkbookRefresh = React.useEffectEvent(() => {
-    if (typeof document === "undefined" || document.visibilityState !== "visible") {
-      return;
-    }
-
-    if (isBrandPending || isWorkbookRefreshing) {
-      return;
-    }
-
-    const now = Date.now();
-    if (now - autoRefreshTimestampRef.current < AUTO_REFRESH_THROTTLE_MS) {
-      return;
-    }
-
-    autoRefreshTimestampRef.current = now;
-    router.refresh();
-  });
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const handleFocus = () => {
-      requestWorkbookRefresh();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        requestWorkbookRefresh();
-      }
-    };
-
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        requestWorkbookRefresh();
-      }
-    }, AUTO_REFRESH_INTERVAL_MS);
-
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.body.style.overflow = "unset";
     };
-  }, []);
+  }, [isDigitalModalOpen]);
+
+  const hasSummaryData = workbook.dailySummaries.length > 0;
+  const tabBrandLookup = workbook.tabBrandLookup;
+
+  const filteredDashboardSummaries = React.useMemo(() => {
+    const fromDate = dateRange?.from;
+    const toDate = dateRange?.to;
+    const from = fromDate ? startOfDay(fromDate) : null;
+    const to = toDate ? endOfDay(toDate) : null;
+
+    return workbook.dailySummaries.filter((entry) => {
+      const date = parseDate(entry.date);
+      if (!date) return false;
+      return (!from || !isBefore(date, from)) && (!to || !isAfter(date, to));
+    });
+  }, [dateRange, workbook.dailySummaries]);
+
+  const brandTabs = React.useMemo(() => {
+    if (brand === "all") {
+      return workbook.tabs;
+    }
+
+    return workbook.tabs.filter((tab) => tabBrandLookup[tab] === brand);
+  }, [brand, tabBrandLookup, workbook.tabs]);
+
+  const aggregatedLeadCountsByTab = React.useMemo(
+    () =>
+      aggregateMetricByTab(
+        filteredDashboardSummaries,
+        (summary) => summary.leadCountsByTab,
+      ),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedTopCampaignCountsByTab = React.useMemo(
+    () =>
+      aggregateMetricByTab(
+        filteredDashboardSummaries,
+        (summary) => summary.topCampaignCountsByTab,
+      ),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedBigwingInstagramByTab = React.useMemo(
+    () =>
+      aggregateMetricByTab(
+        filteredDashboardSummaries,
+        (summary) => summary.bigwingInstagramCountsByTab,
+      ),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedBigwingFacebookByTab = React.useMemo(
+    () =>
+      aggregateMetricByTab(
+        filteredDashboardSummaries,
+        (summary) => summary.bigwingFacebookCountsByTab,
+      ),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedRedwingInstagramByTab = React.useMemo(
+    () =>
+      aggregateMetricByTab(
+        filteredDashboardSummaries,
+        (summary) => summary.redwingInstagramCountsByTab,
+      ),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedRedwingFacebookByTab = React.useMemo(
+    () =>
+      aggregateMetricByTab(
+        filteredDashboardSummaries,
+        (summary) => summary.redwingFacebookCountsByTab,
+      ),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedPlatformCountsByTab = React.useMemo(
+    () => aggregatePlatformMetricByTab(filteredDashboardSummaries),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedBigwingResponsesByTab = React.useMemo(
+    () => aggregateResponseMetricByTab(filteredDashboardSummaries),
+    [filteredDashboardSummaries],
+  );
+
+  const aggregatedRedwingLocationsByTab = React.useMemo(
+    () => aggregateLocationMetricByTab(filteredDashboardSummaries),
+    [filteredDashboardSummaries],
+  );
+
+  const campaignOptions = React.useMemo(() => brandTabs, [brandTabs]);
 
   React.useEffect(() => {
-    setIsDigitalModalOpen(false);
-    setIsDigitalPinVerified(false);
-    setDigitalPin("");
-    setDigitalError("");
-    setDigitalMeta(null);
-    setDigitalResponseText("");
-    setDigitalSuccessMessage("");
-  }, [brand]);
+    if (campaignFilter === "all") {
+      return;
+    }
 
-  const brandRows = React.useMemo(
-    () =>
-      workbook.rows.filter((row) => {
-        if (brand === "all") return row.brand !== "unknown";
-        return row.brand === brand;
-      }),
-    [brand, workbook.rows],
+    if (!brandTabs.includes(campaignFilter)) {
+      setCampaignFilter("all");
+    }
+  }, [brandTabs, campaignFilter]);
+
+  const selectedTabs = React.useMemo(() => {
+    if (campaignFilter === "all") {
+      return brandTabs;
+    }
+
+    return brandTabs.includes(campaignFilter) ? [campaignFilter] : [];
+  }, [brandTabs, campaignFilter]);
+
+  const selectedBigwingTabs = React.useMemo(
+    () => selectedTabs.filter((tab) => tabBrandLookup[tab] === "bigwing"),
+    [selectedTabs, tabBrandLookup],
   );
 
-  const todayIst = getIstDateKey(new Date());
-
-  const campaigns = React.useMemo(
-    () => Array.from(new Set(brandRows.map((row) => row.campaign).filter(Boolean))).sort(),
-    [brandRows],
+  const selectedRedwingTabs = React.useMemo(
+    () => selectedTabs.filter((tab) => tabBrandLookup[tab] === "redwing"),
+    [selectedTabs, tabBrandLookup],
   );
 
-  const autocompleteRows = React.useMemo(() => {
-    const fromDate = dateRange?.from;
-    const toDate = dateRange?.to;
-
-    return brandRows.filter((row) => {
-      const rowDate = parseDate(getRowIstDate(row));
-      const from = fromDate ? startOfDay(fromDate) : null;
-      const to = toDate ? endOfDay(toDate) : null;
-      const outOfRange =
-        (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
-
-      if (outOfRange) return false;
-      if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
-
-      return Boolean(row.adName);
-    });
-  }, [brandRows, campaignFilter, dateRange]);
-
-  const adNameSuggestions = React.useMemo(
+  const totalLeads = React.useMemo(
     () =>
-      Array.from(new Set(autocompleteRows.map((row) => row.adName.trim()).filter(Boolean))).sort((left, right) =>
-        left.localeCompare(right),
-      ),
-    [autocompleteRows],
-  );
+      filteredDashboardSummaries.reduce((total, summary) => {
+        if (campaignFilter !== "all") {
+          return total + sumTabs(summary.leadCountsByTab, selectedTabs);
+        }
 
-  const filteredRows = React.useMemo(() => {
-    const fromDate = dateRange?.from;
-    const toDate = dateRange?.to;
+        if (brand === "bigwing") {
+          return total + summary.bigwingLeads;
+        }
 
-    return brandRows.filter((row) => {
-      const rowDate = parseDate(getRowIstDate(row));
-      const from = fromDate ? startOfDay(fromDate) : null;
-      const to = toDate ? endOfDay(toDate) : null;
-      const outOfRange =
-        (from && rowDate && isBefore(rowDate, from)) || (to && rowDate && isAfter(rowDate, to));
+        if (brand === "redwing") {
+          return total + summary.redwingLeads;
+        }
 
-      if (outOfRange) return false;
-      if (campaignFilter !== "all" && row.campaign !== campaignFilter) return false;
-      if (normalizedSearchFilter && !row.adName.toLowerCase().includes(normalizedSearchFilter)) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [brandRows, campaignFilter, dateRange, normalizedSearchFilter]);
-
-  const filteredCampaignNames = React.useMemo(
-    () =>
-      Array.from(new Set(filteredRows.map((row) => row.campaign).filter(Boolean))).sort((left, right) =>
-        left.localeCompare(right),
-      ),
-    [filteredRows],
+        return total + summary.totalLeads;
+      }, 0),
+    [brand, campaignFilter, filteredDashboardSummaries, selectedTabs],
   );
 
   const metaSpendDateRange = React.useMemo(() => {
@@ -825,37 +737,47 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     };
   }, [dateRange]);
 
-  const loadMetaSpend = React.useEffectEvent(
-    async ({
-      campaigns,
-      from,
-      signal,
-      to,
-    }: {
-      campaigns: string[];
-      from: string;
-      signal: AbortSignal;
-      to: string;
-    }) => {
+  const selectedCampaignRequests = React.useMemo(
+    () =>
+      selectedTabs.map((tab) => ({
+        aliases: workbook.campaignAliasesByTab[tab] ?? [tab],
+        label: tab,
+      })),
+    [selectedTabs, workbook.campaignAliasesByTab],
+  );
+
+  React.useEffect(() => {
+    if (!metaSpendDateRange) {
+      setMetaSpend(null);
+      setMetaSpendError(null);
+      setIsMetaSpendLoading(false);
+      return;
+    }
+
+    const activeDateRange = metaSpendDateRange;
+    const controller = new AbortController();
+
+    async function loadMetaSpend() {
       try {
+        setMetaSpend(null);
+        setMetaSpendError(null);
+        setIsMetaSpendLoading(true);
+
         const response = await fetch("/api/meta/spend", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            campaigns,
-            from,
-            to,
+            campaigns: selectedCampaignRequests,
+            from: activeDateRange.from,
+            to: activeDateRange.to,
           }),
           cache: "no-store",
-          signal,
+          signal: controller.signal,
         });
         const data = (await response.json().catch(() => null)) as
-          | ({
-              ok?: boolean;
-              error?: string;
-            } & Partial<MetaSpendSummary>)
+          | ({ ok?: boolean; error?: string } & Partial<MetaSpendSummary>)
           | null;
 
         if (!response.ok || !data?.ok) {
@@ -863,8 +785,23 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
         }
 
         setMetaSpend({
+          campaigns: Array.isArray(data.campaigns)
+            ? data.campaigns.map((campaign) => ({
+                cpc: Number(campaign?.cpc ?? 0),
+                currency:
+                  typeof campaign?.currency === "string" && campaign.currency
+                    ? campaign.currency
+                    : "INR",
+                name:
+                  typeof campaign?.name === "string" ? campaign.name : "Unknown",
+                spend: Number(campaign?.spend ?? 0),
+              }))
+            : [],
           configured: Boolean(data.configured),
-          currency: typeof data.currency === "string" && data.currency ? data.currency : "INR",
+          currency:
+            typeof data.currency === "string" && data.currency
+              ? data.currency
+              : "INR",
           matchedCampaigns: Number(data.matchedCampaigns ?? 0),
           requestedCampaigns: Number(data.requestedCampaigns ?? 0),
           totalSpend: Number(data.totalSpend ?? 0),
@@ -877,72 +814,47 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
         setMetaSpend(null);
         setMetaSpendError(
-          error instanceof Error ? error.message : "Unable to fetch Meta spend right now.",
+          error instanceof Error
+            ? error.message
+            : "Unable to fetch Meta spend right now.",
         );
       } finally {
-        if (!signal.aborted) {
+        if (!controller.signal.aborted) {
           setIsMetaSpendLoading(false);
         }
       }
-    },
-  );
-
-  React.useEffect(() => {
-    if (!metaSpendDateRange) {
-      setMetaSpend(null);
-      setMetaSpendError(null);
-      setIsMetaSpendLoading(false);
-      return;
     }
 
-    const controller = new AbortController();
-
-    setMetaSpend(null);
-    setMetaSpendError(null);
-    setIsMetaSpendLoading(true);
-
-    loadMetaSpend({
-      campaigns: filteredCampaignNames,
-      from: metaSpendDateRange.from,
-      signal: controller.signal,
-      to: metaSpendDateRange.to,
-    });
+    void loadMetaSpend();
 
     return () => {
       controller.abort();
     };
-  }, [filteredCampaignNames, metaSpendDateRange]);
+  }, [metaSpendDateRange, selectedCampaignRequests]);
 
-  const filteredDigitalLeads = React.useMemo(() => {
-    const fromDate = dateRange?.from;
-    const toDate = dateRange?.to;
-    const from = fromDate ? startOfDay(fromDate) : null;
-    const to = toDate ? endOfDay(toDate) : null;
+  const matchedCampaigns = metaSpend?.campaigns ?? [];
+  const metaCpcTotal = matchedCampaigns.reduce(
+    (total, campaign) => total + campaign.cpc,
+    0,
+  );
 
-    return (workbook.digitalLeads || []).filter((entry) => {
-      const d = parseDate(entry.date);
-      if (!d) return false;
-      return (!from || !isBefore(d, from)) && (!to || !isAfter(d, to));
-    });
-  }, [workbook.digitalLeads, dateRange]);
-
-  const summary = React.useMemo(() => summarizeRows(filteredRows), [filteredRows]);
-
-  const spendCardValue = React.useMemo(() => {
-    if (isMetaSpendLoading) {
-      return "...";
-    }
-
-    if (!metaSpend?.configured) {
-      return "--";
-    }
+  const metaCostValue = React.useMemo(() => {
+    if (isMetaSpendLoading) return "...";
+    if (!metaSpend?.configured) return "--";
 
     return formatCurrencyAmount(metaSpend.totalSpend, metaSpend.currency);
   }, [isMetaSpendLoading, metaSpend]);
 
-  const spendCardHint = React.useMemo(() => {
+  const metaCpcValue = React.useMemo(() => {
+    if (isMetaSpendLoading) return "...";
+    if (!metaSpend?.configured || matchedCampaigns.length === 0) return "--";
+
+    return formatCurrencyAmount(metaCpcTotal, metaSpend.currency);
+  }, [isMetaSpendLoading, matchedCampaigns.length, metaCpcTotal, metaSpend]);
+
+  const metaCostHint = React.useMemo(() => {
     if (isMetaSpendLoading) {
-      return "Fetching live Meta spend.";
+      return "Fetching live Meta cost for the selected filters.";
     }
 
     if (metaSpendError) {
@@ -950,191 +862,366 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
     }
 
     if (!metaSpend?.configured) {
-      return "Add META_ACCESS_TOKEN to enable spend.";
+      return "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to enable Meta cost.";
     }
 
-    if (metaSpend.requestedCampaigns === 0) {
-      return "No campaigns match the current filters.";
+    if (selectedTabs.length === 0) {
+      return "No campaigns available for the current selection.";
     }
 
-    return `${metaSpend.matchedCampaigns} matching campaign${metaSpend.matchedCampaigns === 1 ? "" : "s"} from Meta`;
-  }, [isMetaSpendLoading, metaSpend, metaSpendError]);
+    return `${metaSpend.matchedCampaigns} matched campaign${
+      metaSpend.matchedCampaigns === 1 ? "" : "s"
+    } from Meta`;
+  }, [isMetaSpendLoading, metaSpend, metaSpendError, selectedTabs.length]);
 
-  const todayCampaignRows = React.useMemo(
-    () =>
-      brandRows.filter((row) => {
-        if (!isRowInIstDate(row, todayIst)) return false;
-        if (normalizedSearchFilter && !row.adName.toLowerCase().includes(normalizedSearchFilter)) {
-          return false;
-        }
+  const metaCpcHint = React.useMemo(() => {
+    if (isMetaSpendLoading) {
+      return "Fetching live Meta CPC for the selected filters.";
+    }
 
-        return true;
-      }),
-    [brandRows, normalizedSearchFilter, todayIst],
-  );
+    if (metaSpendError) {
+      return metaSpendError;
+    }
 
-  const todayCampaignData = Array.from(
-    todayCampaignRows.reduce<Map<string, number>>((map, row) => {
-      const key = row.campaign || "Unknown";
-      map.set(key, (map.get(key) ?? 0) + 1);
-      return map;
-    }, new Map<string, number>()),
-  )
-    .map(([campaign, leads]) => ({ campaign, leads }))
-    .sort((a, b) => b.leads - a.leads)
-    .slice(0, 2);
+    if (!metaSpend?.configured) {
+      return "Meta configuration is required for live CPC.";
+    }
+
+    if (matchedCampaigns.length === 0) {
+      return "No matched campaign has CPC data in this range.";
+    }
+
+    return campaignFilter === "all"
+      ? `Sum of ${matchedCampaigns.length} matched campaign CPC values.`
+      : "Live CPC from Meta for the selected campaign.";
+  }, [campaignFilter, isMetaSpendLoading, matchedCampaigns.length, metaSpend, metaSpendError]);
+
+  const dashboardCards = React.useMemo<DashboardCard[]>(() => {
+    const totalLeadHint =
+      campaignFilter === "all"
+        ? brand === "all"
+          ? "Total leads across all selected campaigns in the date range"
+          : `${BRAND_CONFIG[brand].label} total leads in the selected date range`
+        : "Total leads for the selected campaign";
+
+    const cards: DashboardCard[] = [
+      {
+        hint: totalLeadHint,
+        icon: Users,
+        label: "Total Leads",
+        value: formatCompactNumber(totalLeads),
+      },
+      {
+        hint:
+          campaignFilter === "all"
+            ? `${selectedTabs.length} campaign${
+                selectedTabs.length === 1 ? "" : "s"
+              } selected`
+            : "1 selected campaign",
+        icon: Target,
+        label: "Campaign Count",
+        value: formatCompactNumber(selectedTabs.length),
+      },
+      {
+        hint: metaCostHint,
+        icon: IndianRupee,
+        label: "Cost Spent",
+        value: metaCostValue,
+      },
+      {
+        hint: metaCpcHint,
+        icon: Sparkles,
+        label: "Meta CPC",
+        value: metaCpcValue,
+      },
+    ];
+
+    return cards;
+  }, [
+    brand,
+    campaignFilter,
+    metaCostHint,
+    metaCostValue,
+    metaCpcHint,
+    metaCpcValue,
+    selectedTabs.length,
+    totalLeads,
+  ]);
+
+  const filteredDigitalLeads = React.useMemo(() => {
+    const fromDate = dateRange?.from;
+    const toDate = dateRange?.to;
+    const from = fromDate ? startOfDay(fromDate) : null;
+    const to = toDate ? endOfDay(toDate) : null;
+
+    return workbook.digitalLeads.filter((entry) => {
+      const date = parseDate(entry.date);
+      if (!date) return false;
+      return (!from || !isBefore(date, from)) && (!to || !isAfter(date, to));
+    });
+  }, [dateRange, workbook.digitalLeads]);
 
   const currentRangeFrom = dateRange?.from;
   const currentRangeTo = dateRange?.to;
-  const isSingleDayRange = !!(
+  const isSingleDayRange = Boolean(
     currentRangeFrom &&
-    currentRangeTo &&
-    getIstDateKey(currentRangeFrom) === getIstDateKey(currentRangeTo)
+      currentRangeTo &&
+      getIstDateKey(currentRangeFrom) === getIstDateKey(currentRangeTo),
   );
-  const selectedIstDateKey = isSingleDayRange && currentRangeFrom ? getIstDateKey(currentRangeFrom) : null;
+  const selectedIstDateKey =
+    isSingleDayRange && currentRangeFrom ? getIstDateKey(currentRangeFrom) : null;
   const todayIstKey = getIstDateKey(new Date());
   const isTodaySingleDayRange = selectedIstDateKey === todayIstKey;
 
-  const timelineData = React.useMemo(() => {
+  const timelineData = React.useMemo<TimelineDatum[]>(() => {
     if (isSingleDayRange && selectedIstDateKey) {
-      const timelineMap = new Map<string, TimelineDatum>();
-
-      for (const row of filteredRows) {
-        const timestamp = getRowTimestamp(row);
-        if (!timestamp) continue;
-        if (getIstDateKey(timestamp) !== selectedIstDateKey) continue;
-
-        const key = getIstHourKey(timestamp);
-        const hour = getIstHourNumber(timestamp);
-        const bucket = timelineMap.get(key) ?? {
-          date: key,
-          label: formatHourLabel(hour),
-          tooltipLabel: formatHourTooltipLabel(hour),
-          tooltipHeading: "Time",
-          leads: 0,
-          bigwingLeads: 0,
-          redwingLeads: 0,
-        };
-        bucket.leads += 1;
-        if (row.brand === "bigwing") bucket.bigwingLeads += 1;
-        if (row.brand === "redwing") bucket.redwingLeads += 1;
-        timelineMap.set(key, bucket);
-      }
-
-      const hourLimit = isTodaySingleDayRange ? getIstHourNumber(new Date()) : 23;
-      const buckets = [];
+      const selectedSummary = filteredDashboardSummaries.find(
+        (summary) => summary.date === selectedIstDateKey,
+      );
+      const hourLimit = isTodaySingleDayRange ? new Date().getHours() : 23;
+      const timelineMap = new Map<number, TimelineDatum>();
 
       for (let hour = 0; hour <= hourLimit; hour += 1) {
-        const date = `${selectedIstDateKey} ${String(hour).padStart(2, "0")}`;
-        buckets.push(
-          timelineMap.get(date) ?? {
-            date,
-            label: formatHourLabel(hour),
-            tooltipLabel: formatHourTooltipLabel(hour),
-            tooltipHeading: "Time",
-            leads: 0,
-            bigwingLeads: 0,
-            redwingLeads: 0,
-          },
-        );
+        timelineMap.set(hour, {
+          bigwingLeads: 0,
+          date: `${selectedIstDateKey} ${String(hour).padStart(2, "0")}`,
+          label: formatHourLabel(hour),
+          leads: 0,
+          redwingLeads: 0,
+          tooltipHeading: "Time",
+          tooltipLabel: formatHourTooltipLabel(hour),
+        });
       }
 
-      return buckets;
+      if (selectedSummary) {
+        for (const tab of selectedTabs) {
+          for (const value of selectedSummary.hourlyBreakdownByTab[tab] ?? []) {
+            const hour = parseHourValue(value);
+            if (hour == null || hour > hourLimit) continue;
+
+            const bucket = timelineMap.get(hour);
+            if (!bucket) continue;
+
+            bucket.leads += 1;
+            if (tabBrandLookup[tab] === "bigwing") bucket.bigwingLeads += 1;
+            if (tabBrandLookup[tab] === "redwing") bucket.redwingLeads += 1;
+          }
+        }
+      }
+
+      return Array.from(timelineMap.values()).sort((left, right) =>
+        left.date.localeCompare(right.date),
+      );
     }
 
-    const timelineMap = new Map<string, TimelineDatum>();
-    for (const row of filteredRows) {
-      const key = row.date ?? "Unknown";
-      const bucket = timelineMap.get(key) ?? {
-        date: key,
-        label: key.slice(8, 10),
-        tooltipLabel: key,
+    const rangeFrom = currentRangeFrom ?? currentRangeTo;
+    const rangeTo = currentRangeTo ?? currentRangeFrom;
+    const summariesByDate = new Map(
+      filteredDashboardSummaries.map((summary) => [summary.date, summary] as const),
+    );
+    const dateKeys =
+      rangeFrom && rangeTo
+        ? buildDateKeysInRange(rangeFrom, rangeTo)
+        : filteredDashboardSummaries.map((summary) => summary.date);
+
+    return dateKeys.map((dateKey) => {
+      const summary = summariesByDate.get(dateKey);
+
+      return {
+        bigwingLeads: summary ? sumTabs(summary.leadCountsByTab, selectedBigwingTabs) : 0,
+        date: dateKey,
+        label: dateKey.slice(8, 10),
+        leads: summary ? sumTabs(summary.leadCountsByTab, selectedTabs) : 0,
+        redwingLeads: summary ? sumTabs(summary.leadCountsByTab, selectedRedwingTabs) : 0,
         tooltipHeading: "Date",
-        leads: 0,
-        bigwingLeads: 0,
-        redwingLeads: 0,
+        tooltipLabel: dateKey,
       };
-      bucket.leads += 1;
-      if (row.brand === "bigwing") bucket.bigwingLeads += 1;
-      if (row.brand === "redwing") bucket.redwingLeads += 1;
-      timelineMap.set(key, bucket);
-    }
-
-    return Array.from(timelineMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-  }, [filteredRows, isSingleDayRange, isTodaySingleDayRange, selectedIstDateKey]);
+    });
+  }, [
+    currentRangeFrom,
+    currentRangeTo,
+    filteredDashboardSummaries,
+    isSingleDayRange,
+    isTodaySingleDayRange,
+    selectedBigwingTabs,
+    selectedIstDateKey,
+    selectedRedwingTabs,
+    selectedTabs,
+    tabBrandLookup,
+  ]);
 
   const timelineTickInterval = Math.max(0, Math.ceil(timelineData.length / 6) - 1);
 
-  const campaignMap = new Map<string, number>();
-  const platformMap = new Map<string, { total: number; bigwing: number; redwing: number }>();
-  const locationMap = new Map<string, number>();
-  const bigwingResponseMap = new Map<string, number>();
-  const redwingLocationMap = new Map<string, number>();
+  const platformData = React.useMemo<PlatformDatum[]>(() => {
+    let bigwingIg = 0;
+    let bigwingFb = 0;
+    let redwingIg = 0;
+    let redwingFb = 0;
 
-  for (const row of filteredRows) {
-    campaignMap.set(row.campaign || "Unknown", (campaignMap.get(row.campaign || "Unknown") ?? 0) + 1);
-    const platformKey = row.platform || "unknown";
-    const platformBucket = platformMap.get(platformKey) ?? { total: 0, bigwing: 0, redwing: 0 };
-    platformBucket.total += 1;
-    if (row.brand === "bigwing") platformBucket.bigwing += 1;
-    if (row.brand === "redwing") platformBucket.redwing += 1;
-    platformMap.set(platformKey, platformBucket);
-    if (row.location) {
-      const label = getLocationLabel(row, brand);
-      locationMap.set(label, (locationMap.get(label) ?? 0) + 1);
+    for (const tab of selectedTabs) {
+      const counts = aggregatedPlatformCountsByTab[tab] ?? { fb: 0, ig: 0 };
+      if (tabBrandLookup[tab] === "bigwing") {
+        bigwingIg += counts.ig;
+        bigwingFb += counts.fb;
+      } else if (tabBrandLookup[tab] === "redwing") {
+        redwingIg += counts.ig;
+        redwingFb += counts.fb;
+      }
     }
-    if (row.brand === "bigwing" && (row.location === "yes" || row.location === "no")) {
-      bigwingResponseMap.set(row.location, (bigwingResponseMap.get(row.location) ?? 0) + 1);
+
+    return [
+      {
+        bigwingValue: bigwingIg,
+        name: "IG",
+        redwingValue: redwingIg,
+        value: bigwingIg + redwingIg,
+      },
+      {
+        bigwingValue: bigwingFb,
+        name: "FB",
+        redwingValue: redwingFb,
+        value: bigwingFb + redwingFb,
+      },
+    ].filter((item) => item.value > 0);
+  }, [aggregatedPlatformCountsByTab, selectedTabs, tabBrandLookup]);
+
+  const campaignData = React.useMemo(
+    () =>
+      selectedTabs
+        .map((tab) => ({
+          campaign: tab,
+          leads:
+            aggregatedTopCampaignCountsByTab[tab] ??
+            aggregatedLeadCountsByTab[tab] ??
+            0,
+        }))
+        .filter((item) => item.leads > 0)
+        .sort((left, right) => right.leads - left.leads)
+        .slice(0, 8),
+    [aggregatedLeadCountsByTab, aggregatedTopCampaignCountsByTab, selectedTabs],
+  );
+
+  const todayCampaignData = React.useMemo(() => {
+    const todaySummary = workbook.dailySummaries.find((entry) => entry.date === todayIstKey);
+    if (!todaySummary || brand !== "all") {
+      return [];
     }
-    if (row.brand === "redwing" && row.location) {
-      redwingLocationMap.set(row.location, (redwingLocationMap.get(row.location) ?? 0) + 1);
+
+    return workbook.tabs
+      .map((tab) => ({
+        campaign: tab,
+        leads: todaySummary.topCampaignCountsByTab[tab] ?? todaySummary.leadCountsByTab[tab] ?? 0,
+      }))
+      .filter((item) => item.leads > 0)
+      .sort((left, right) => right.leads - left.leads)
+      .slice(0, 2);
+  }, [brand, todayIstKey, workbook.dailySummaries, workbook.tabs]);
+
+  const bigwingResponseData = React.useMemo(() => {
+    const totals = { no: 0, yes: 0 };
+
+    for (const tab of selectedBigwingTabs) {
+      const response = aggregatedBigwingResponsesByTab[tab];
+      if (!response) continue;
+      totals.yes += response.yes;
+      totals.no += response.no;
     }
-  }
 
-  const campaignData = Array.from(campaignMap.entries())
-    .map(([campaign, leads]) => ({ campaign, leads }))
-    .sort((a, b) => b.leads - a.leads)
-    .slice(0, 8);
+    return [
+      { leads: totals.yes, response: "Yes" },
+      { leads: totals.no, response: "No" },
+    ].filter((item) => item.leads > 0);
+  }, [aggregatedBigwingResponsesByTab, selectedBigwingTabs]);
 
-  const platformData = Array.from(platformMap.entries())
-    .map(([name, value]) => ({
-      name: name.toUpperCase(),
-      value: value.total,
-      bigwingValue: value.bigwing,
-      redwingValue: value.redwing,
-    }))
-    .sort((a, b) => b.value - a.value);
+  const redwingLocationData = React.useMemo(() => {
+    const countsByLabel = new Map<string, number>();
 
-  const bigwingResponseData = Array.from(bigwingResponseMap.entries())
-    .map(([response, leads]) => ({ response, leads }))
-    .sort((a, b) => b.leads - a.leads);
+    for (const tab of selectedRedwingTabs) {
+      const counts = aggregatedRedwingLocationsByTab[tab] ?? [];
+      counts.forEach((count, index) => {
+        const label = workbook.redwingLocationLabels[index] ?? `Location ${index + 1}`;
+        countsByLabel.set(label, (countsByLabel.get(label) ?? 0) + count);
+      });
+    }
 
+    return Array.from(countsByLabel.entries())
+      .map(([location, leads]) => ({
+        leads,
+        location: formatChartLocationLabel(location),
+      }))
+      .filter((item) => item.leads > 0)
+      .sort((left, right) => right.leads - left.leads);
+  }, [aggregatedRedwingLocationsByTab, selectedRedwingTabs, workbook.redwingLocationLabels]);
 
-  const redwingLocationData = Array.from(redwingLocationMap.entries())
-    .map(([location, leads]) => ({ location: formatChartLocationLabel(location), leads }))
-    .sort((a, b) => b.leads - a.leads);
-
+  const activeBrandAssets = getBrandAssets(brand);
+  const latestSummaryDate =
+    filteredDashboardSummaries.at(-1)?.date ??
+    workbook.dailySummaries.at(-1)?.date ??
+    null;
+  const leadsPageHref = `/leads?brand=${brand === "all" ? "bigwing" : brand}`;
+  const dashboardBackground =
+    brand === "bigwing" ? "#000000" : "#0D4D8B";
+  const chartPrimary = "#ffffff";
+  const chartAccent = "#8de0ff";
+  const chartHoverCursor = "rgba(216, 216, 216, 0.1)";
+  const pieColors = ["#ffffff", "#8de0ff", "#eefbff", "#d8f3ff", "#b9eaff"];
+  const redwingLocationAxisWidth = isDesktop ? 118 : 80;
+  const redwingLocationAxisFontSize = isDesktop ? 14 : 10;
+  const redwingLocationChartMargin = isDesktop
+    ? { left: 0, right: 0 }
+    : { left: -12, right: 0 };
   const redwingLocationChartHeight = Math.max(
     brand === "redwing" ? 180 : 220,
     redwingLocationData.length * (brand === "redwing" ? 32 : 42),
   );
 
-  const chartPrimary = "#ffffff";
-  const chartAccent = "#8de0ff";
-  const chartHoverCursor = "rgba(216, 216, 216, 0.1)";
-  const pieColors = ["#ffffff", "#8de0ff", "#eefbff", "#d8f3ff", "#b9eaff"];
-
   async function handleLogout() {
-    startTransition(async () => {
-      await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    startTransition(() => {
       router.refresh();
     });
   }
 
-  async function handleDigitalPinSubmit() {
-    setIsDigitalLoading(true);
-    setDigitalError("");
+  function handleBrandChange(nextBrand: Brand) {
+    if (nextBrand === brand) return;
+
+    startBrandTransition(() => {
+      setBrand(nextBrand);
+      setCampaignFilter("all");
+      const params = new URLSearchParams(searchParams.toString());
+      if (nextBrand === "all") {
+        params.delete("brand");
+      } else {
+        params.set("brand", nextBrand);
+      }
+
+      const nextUrl = params.toString() ? `${pathname}?${params}` : pathname;
+      router.replace(nextUrl, { scroll: false });
+    });
+  }
+
+  function handleOpenLeadsTable() {
+    startTransition(() => {
+      router.push(leadsPageHref);
+    });
+  }
+
+  function openDigitalModal() {
+    setIsDigitalModalOpen(true);
+    setDigitalError(null);
     setDigitalSuccessMessage("");
+  }
+
+  function closeDigitalModal() {
+    setIsDigitalModalOpen(false);
+    setDigitalError(null);
+    setDigitalSuccessMessage("");
+  }
+
+  async function handleDigitalPinSubmit() {
+    setDigitalError(null);
+    setDigitalSuccessMessage("");
+    setIsDigitalLoading(true);
 
     try {
       const response = await fetch("/api/digital/session", {
@@ -1144,26 +1231,30 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
         },
         body: JSON.stringify({ pin: digitalPin }),
       });
-
       const data = (await response.json().catch(() => null)) as
-        | ({ ok: true } & DigitalLeadImportMeta)
-        | { ok: false; error?: string }
+        | ({ ok?: boolean; error?: string } & Partial<DigitalLeadImportMeta>)
         | null;
 
-      if (!response.ok || !data || data.ok !== true) {
-        if (response.status === 404) {
-          setDigitalError("Importer API not found. Please restart the server.");
-          return;
-        }
-        setDigitalError(data && "error" in data ? data.error ?? "Wrong digital PIN." : "Wrong digital PIN.");
+      if (!response.ok || !data?.ok) {
+        setIsDigitalPinVerified(false);
+        setDigitalMeta(null);
+        setDigitalError(data?.error ?? "Wrong digital PIN.");
         return;
       }
 
-      setDigitalMeta({
-        lastImportedDate: data.lastImportedDate,
-        prompt: data.prompt,
-      });
       setIsDigitalPinVerified(true);
+      setDigitalMeta({
+        lastImportedDate:
+          typeof data.lastImportedDate === "string" ? data.lastImportedDate : null,
+        prompt: typeof data.prompt === "string" ? data.prompt : "",
+      });
+      setDigitalError(null);
+    } catch (error) {
+      setDigitalError(
+        error instanceof Error
+          ? error.message
+          : "Unable to verify the digital PIN.",
+      );
     } finally {
       setIsDigitalLoading(false);
     }
@@ -1174,47 +1265,43 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
 
     try {
       await navigator.clipboard.writeText(digitalMeta.prompt);
-      setDigitalSuccessMessage("Prompt copied. Paste it into ChatGPT with your image.");
-      setDigitalError("");
+      setDigitalSuccessMessage("Prompt copied.");
     } catch {
-      setDigitalError("Unable to copy prompt right now.");
+      setDigitalError("Unable to copy the prompt right now.");
     }
   }
 
   async function handleDigitalImportSubmit() {
-    setIsDigitalLoading(true);
-    setDigitalError("");
+    setDigitalError(null);
     setDigitalSuccessMessage("");
+    setIsDigitalLoading(true);
 
     try {
       const parsed = JSON.parse(digitalResponseText) as { entries?: unknown[] };
-
       const response = await fetch("/api/digital/import", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          payload: parsed,
           pin: digitalPin,
           promptUsed: digitalMeta?.prompt ?? "",
-          payload: parsed,
         }),
       });
-
       const data = (await response.json().catch(() => null)) as
-        | { ok: true; count: number }
-        | { ok: false; error?: string }
+        | { count?: number; error?: string; ok?: boolean }
         | null;
 
-      if (!response.ok || !data || data.ok !== true) {
-        setDigitalError(
-          data && "error" in data ? data.error ?? "Unable to import the pasted JSON." : "Unable to import the pasted JSON.",
-        );
-        return;
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error ?? "Unable to import the pasted JSON.");
       }
 
-      setDigitalSuccessMessage(`${data.count} row${data.count === 1 ? "" : "s"} appended to DATA.`);
+      setDigitalSuccessMessage(
+        `${data.count} row${data.count === 1 ? "" : "s"} appended to DATA.`,
+      );
       setDigitalResponseText("");
+
       const refreshedMeta = await fetch("/api/digital/session", {
         method: "POST",
         headers: {
@@ -1223,92 +1310,32 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
         body: JSON.stringify({ pin: digitalPin }),
       });
       const refreshedData = (await refreshedMeta.json().catch(() => null)) as
-        | ({ ok: true } & DigitalLeadImportMeta)
+        | ({ ok?: boolean } & Partial<DigitalLeadImportMeta>)
         | null;
 
       if (refreshedMeta.ok && refreshedData?.ok) {
         setDigitalMeta({
-          lastImportedDate: refreshedData.lastImportedDate,
-          prompt: refreshedData.prompt,
+          lastImportedDate:
+            typeof refreshedData.lastImportedDate === "string"
+              ? refreshedData.lastImportedDate
+              : null,
+          prompt: typeof refreshedData.prompt === "string" ? refreshedData.prompt : "",
         });
       }
-    } catch {
-      setDigitalError("Paste valid JSON from ChatGPT before importing.");
-    } finally {
-      setIsDigitalLoading(false);
-    }
-  }
 
-  async function handleWorkbookRefresh() {
-    if (isWorkbookRefreshing) {
-      return;
-    }
-
-    setIsWorkbookRefreshing(true);
-    setDigitalError("");
-    setDigitalSuccessMessage("");
-
-    try {
-      const response = await fetch("/api/workbook/refresh", { method: "POST" });
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            ok?: boolean;
-            error?: string;
-          }
-        | null;
-
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Unable to refresh workbook data right now.");
-      }
-
-      setDigitalSuccessMessage("Workbook data refreshed from Google Sheets.");
       startTransition(() => {
         router.refresh();
       });
     } catch (error) {
       setDigitalError(
-        error instanceof Error ? error.message : "Unable to refresh workbook data right now.",
+        error instanceof Error
+          ? error.message
+          : "Paste valid JSON from ChatGPT before importing.",
       );
     } finally {
-      setIsWorkbookRefreshing(false);
+      setIsDigitalLoading(false);
     }
   }
-
-  function openDigitalModal() {
-    setIsDigitalModalOpen(true);
-    setDigitalError("");
-    setDigitalSuccessMessage("");
-  }
-
-  function closeDigitalModal() {
-    setIsDigitalModalOpen(false);
-    setDigitalError("");
-    setDigitalSuccessMessage("");
-  }
-
-  function handleBrandChange(nextBrand: Brand) {
-    if (nextBrand === brand || isBrandPending) {
-      return;
-    }
-
-    startBrandTransition(() => {
-      setBrand(nextBrand);
-      const nextSearch = new URLSearchParams(searchParams.toString());
-      nextSearch.set("brand", nextBrand);
-      router.replace(`${pathname}?${nextSearch.toString()}`, { scroll: false });
-    });
-  }
-
-  function handleOpenLeadsTable() {
-    startTransition(() => router.push(leadsPageHref));
-  }
-
-  const activeBrandAssets = getBrandAssets(brand);
-  const leadsPageHref = `/leads?brand=${brand === "all" ? "bigwing" : brand}`;
-  const dashboardBackground = brand === "bigwing" ? "#000000" : "#0D4D8B";
-  const redwingLocationAxisWidth = isDesktop ? 118 : 80;
-  const redwingLocationAxisFontSize = isDesktop ? 14 : 10;
-  const redwingLocationChartMargin = isDesktop ? { left: 0, right: 0 } : { left: -12, right: 0 };
 
   return (
     <div
@@ -1316,19 +1343,33 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
       style={{ backgroundColor: dashboardBackground }}
     >
       <div className="min-h-screen">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-8 px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <section className="relative crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-3 py-4 sm:gap-8 sm:px-6 sm:py-6 lg:px-8">
+          <section className="relative crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
                   <Sparkles className="h-3.5 w-3.5" />
                   {brand === "all" ? "Combined Dashboard" : `${activeBrandAssets.label} Dashboard`}
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Campaign analytics</h1>
-                <p className="mt-1 sm:mt-2 max-w-3xl text-xs sm:text-sm text-white/68">
-                  Auto-detected {workbook.tabs.length} campaign tabs from Google Sheets with lead analytics by campaign,
-                  ad name, platform, location, and lead status.
+                <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                  Campaign analytics
+                </h1>
+                <p className="mt-1 max-w-3xl text-xs text-white/68 sm:mt-2 sm:text-sm">
+                  Live DATA-sheet summary dashboard with campaign totals, Meta cost,
+                  Meta CPC, platform mix, response breakdowns, and digital import
+                  analytics.
                 </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-white/62">
+                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
+                    Tabs: {workbook.tabs.length}
+                  </span>
+                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
+                    Campaigns in view: {selectedTabs.length}
+                  </span>
+                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
+                    Latest summary: {latestSummaryDate ?? "No rows"}
+                  </span>
+                </div>
                 {workbook.error ? (
                   <p className="mt-3 rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
                     {workbook.error}
@@ -1337,11 +1378,11 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               </div>
 
               <div className="flex flex-col gap-3 lg:min-h-[132px] lg:items-end lg:justify-between">
-                <div className="flex flex-wrap items-center justify-center lg:justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-2 lg:justify-end">
                   {brandOptions.map((option) => {
                     const selected = option === brand;
-                    const label = option === "all" ? "All" : BRAND_CONFIG[option].label;
                     const loading = isBrandPending && selected;
+                    const label = option === "all" ? "All" : BRAND_CONFIG[option].label;
 
                     return (
                       <Button
@@ -1350,8 +1391,8 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         aria-busy={loading}
                         className={
                           selected
-                            ? "min-w-[80px] gap-2 sm:min-w-[104px] rounded-full border border-white/70 bg-white px-3 sm:px-5 py-1 text-xs sm:text-sm font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
-                            : "min-w-[80px] gap-2 sm:min-w-[104px] rounded-full border border-white/10 bg-white/6 px-3 sm:px-5 py-1 text-xs sm:text-sm text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
+                            ? "min-w-[80px] gap-2 rounded-full border border-white/70 bg-white px-3 py-1 text-xs font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black sm:min-w-[104px] sm:px-5 sm:text-sm"
+                            : "min-w-[80px] gap-2 rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs text-white/62 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white sm:min-w-[104px] sm:px-5 sm:text-sm"
                         }
                         onClick={() => handleBrandChange(option)}
                       >
@@ -1368,7 +1409,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white absolute top-4 right-16 lg:static sm:right-24 md:right-32 lg:right-auto"
+                        className="absolute top-4 right-16 rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white sm:right-24 md:right-32 lg:static"
                         onClick={openDigitalModal}
                         aria-label="Open digital leads importer"
                       >
@@ -1378,7 +1419,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white absolute top-4 right-4 lg:static lg:w-auto lg:h-auto lg:px-5 lg:py-1 lg:gap-2"
+                      className="absolute top-4 right-4 rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white lg:static lg:h-auto lg:w-auto lg:gap-2 lg:px-5 lg:py-1"
                       onClick={handleLogout}
                     >
                       <LogOut className="h-4 w-4" />
@@ -1390,7 +1431,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
             </div>
           </section>
 
-          <section className="grid gap-3 sm:gap-4 crm-surface-radius border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr]">
+          <section className="grid gap-3 crm-surface-radius border border-white/14 bg-white/10 p-5 backdrop-blur-2xl lg:grid-cols-[1.2fr_0.9fr_1.8fr] sm:gap-4">
             <DateRangePicker date={dateRange} onSelect={setDateRange} brand={brand} />
 
             <FilterSelect
@@ -1398,40 +1439,70 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               label="Campaign"
               value={campaignFilter}
               onChange={setCampaignFilter}
-              disabled={brand === "all"}
-              options={[{ value: "all", label: "All campaigns" }, ...campaigns.map((campaign) => ({ value: campaign, label: campaign }))]}
+              disabled={brand === "all" || brandTabs.length === 0}
+              options={[
+                { value: "all", label: "All campaigns" },
+                ...campaignOptions.map((campaign) => ({
+                  label: campaign,
+                  value: campaign,
+                })),
+              ]}
             />
 
-            <AdNameSearchInput id="ad-search" suggestions={adNameSuggestions} onSearchChange={setSearchFilter} />
+            <DisabledAdNameSearchInput id="ad-search" />
           </section>
 
-          <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-            {[
-              { label: "Total Leads", value: formatCompactNumber(summary.totalLeads), hint: "Filtered lead rows", icon: Users },
-              { label: "Unique Phones", value: formatCompactNumber(summary.uniquePhones), hint: "Distinct phone + campaign pairs", icon: Target },
-              { label: "Campaigns", value: formatCompactNumber(summary.campaigns), hint: `${summary.tabs} active tabs`, icon: Layers3 },
-              { label: "Cost Spent", value: spendCardValue, hint: spendCardHint, icon: IndianRupee },
-            ].map((card) => (
-              <div key={card.label} className="crm-surface-radius border border-white/14 bg-white/10 p-3.5 sm:p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all">
-                <div className="mb-2 sm:mb-3 sm:mb-6 flex items-center justify-between">
-                  <span className="text-[11px] sm:text-sm text-white/62 uppercase tracking-tight">{card.label}</span>
-                  <div className="flex h-7 w-7 sm:h-10 sm:w-10 items-center justify-center rounded-lg sm:rounded-2xl border border-white/12 bg-white/10">
+          {!hasSummaryData ? (
+            <section className="crm-surface-radius border border-[#ffe7b0]/18 bg-[#ffe7b0]/8 p-5 text-[#ffe7b0] shadow-[0_20px_60px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
+              <div className="flex items-start gap-3">
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <h2 className="text-base font-semibold text-[#fff6d9]">
+                    DATA summary rows are missing
+                  </h2>
+                  <p className="mt-2 text-sm leading-6">
+                    This dashboard reads the DATA-sheet summary rows. Once those
+                    daily summary rows are present, the cards and charts below will
+                    populate automatically.
+                  </p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+            {dashboardCards.map((card) => (
+              <div
+                key={card.label}
+                className="crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4"
+              >
+                <div className="mb-2 flex items-center justify-between sm:mb-4">
+                  <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
+                    {card.label}
+                  </span>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-white/10 sm:h-10 sm:w-10 sm:rounded-2xl">
                     <card.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   </div>
                 </div>
-                <div className="text-xl sm:text-3xl font-semibold tracking-tight tabular-nums">{card.value}</div>
-                <p className="mt-0.5 sm:mt-2 text-[10px] sm:text-sm text-white/54 leading-none sm:leading-normal">{card.hint}</p>
+                <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
+                  {card.value}
+                </div>
+                <p className="mt-1 text-[10px] leading-none text-white/54 sm:mt-2 sm:text-sm sm:leading-normal">
+                  {card.hint}
+                </p>
               </div>
             ))}
           </section>
 
           <section className="grid gap-3 sm:gap-4 xl:grid-cols-[1.4fr_1fr]">
-            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
-              <div className="mb-3 sm:mb-6 flex items-start justify-between gap-4">
+            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
+              <div className="mb-3 flex items-start justify-between gap-4 sm:mb-6">
                 <div>
                   <h2 className="text-xl font-semibold">Lead timeline</h2>
                   <p className="mt-1 text-sm text-white/58">
-                    {isSingleDayRange ? "Hourly lead volume from `created_time`." : "Daily lead volume from `created_time`."}
+                    {isSingleDayRange
+                      ? "Hourly lead volume from the DATA hourly breakdown."
+                      : "Daily lead volume from DATA summary totals."}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -1451,26 +1522,22 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     >
                       <div className="space-y-3">
                         <div>
-                          <h3 className="text-sm font-semibold text-white">How timeline counts work</h3>
+                          <h3 className="text-sm font-semibold text-white">
+                            How timeline counts work
+                          </h3>
                           <p className="mt-1 text-xs leading-5 text-white/68">
-                            All dates and times are converted to IST first, then grouped into the selected bucket.
+                            Single-day selections use the DATA row&apos;s hourly
+                            breakdown arrays. Multi-day ranges use the per-day DATA
+                            summary totals.
                           </p>
                         </div>
                         <div>
-                          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">Date Range</p>
-                          <p className="mt-1 text-xs leading-5 text-white/76">
-                            If you select <span className="font-semibold text-white">15 Apr - 16 Apr</span>, the chart counts leads from
-                            <span className="font-semibold text-white"> 15 Apr 12:00 AM IST</span> to
-                            <span className="font-semibold text-white"> 16 Apr 11:59 PM IST</span>.
+                          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">
+                            Scope
                           </p>
-                        </div>
-                        <div>
-                          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/52">Time Bucket</p>
                           <p className="mt-1 text-xs leading-5 text-white/76">
-                            A point at <span className="font-semibold text-white">5:00 PM</span> means all leads from
-                            <span className="font-semibold text-white"> 5:00:00 PM</span> to
-                            <span className="font-semibold text-white"> 5:59:59 PM IST</span>. It does not include anything after
-                            <span className="font-semibold text-white"> 6:00 PM</span>.
+                            The chart respects the selected brand, campaign, and date
+                            range before building each bucket.
                           </p>
                         </div>
                       </div>
@@ -1478,7 +1545,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   </Popover>
                   <Button
                     variant="ghost"
-                    className="shrink-0 rounded-full border border-white/12 bg-white/8 px-4 py-1 text-xs sm:text-sm text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                    className="shrink-0 rounded-full border border-white/12 bg-white/8 px-4 py-1 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white sm:text-sm"
                     onClick={handleOpenLeadsTable}
                     disabled={isPending}
                   >
@@ -1486,70 +1553,96 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   </Button>
                 </div>
               </div>
-                <div className="crm-gpu-layer h-[320px] min-w-0">
-                  {isMounted ? (
-                    <ResponsiveContainer id="timeline-chart" width="100%" height={320} minWidth={0} minHeight={0}>
-                      <LineChart data={timelineData}>
-                        <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                        <XAxis
-                          dataKey="date"
-                          stroke="rgba(255,255,255,0.5)"
-                          interval={timelineTickInterval}
-                          minTickGap={24}
-                          tickFormatter={(value) => timelineData.find((d) => d.date === value)?.label ?? ""}
-                        />
-                        <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
-                        <Tooltip content={<TimelineTooltip activeBrand={brand} />} wrapperStyle={{ zIndex: 9999 }} />
-                        <Legend />
-                        <Line type="monotone" dataKey="leads" stroke={chartPrimary} strokeWidth={3} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : null}
-                </div>
+              <div className="crm-gpu-layer h-[320px] min-w-0">
+                {isMounted ? (
+                  <ResponsiveContainer id="timeline-chart" width="100%" height={320}>
+                    <LineChart data={timelineData}>
+                      <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                      <XAxis
+                        dataKey="date"
+                        stroke="rgba(255,255,255,0.5)"
+                        interval={timelineTickInterval}
+                        minTickGap={24}
+                        tickFormatter={(value) =>
+                          timelineData.find((datum) => datum.date === value)?.label ?? ""
+                        }
+                      />
+                      <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        content={<TimelineTooltip activeBrand={brand} />}
+                        wrapperStyle={{ zIndex: 9999 }}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="leads"
+                        stroke={chartPrimary}
+                        strokeWidth={3}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : null}
+              </div>
             </div>
 
-            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
               <div className="mb-3 sm:mb-6">
                 <h2 className="text-xl font-semibold">Platform mix</h2>
-                <p className="mt-1 text-sm text-white/58">Lead split by platform values from your sheet.</p>
+                <p className="mt-1 text-sm text-white/58">
+                  Lead split by DATA platform totals across IG and FB.
+                </p>
               </div>
-                <div className="crm-gpu-layer h-[320px] min-w-0">
-                  {isMounted ? (
-                    <ResponsiveContainer id="platform-chart" width="100%" height={320} minWidth={0} minHeight={0}>
-                      <PieChart>
-                        <Pie
-                          data={platformData}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius={70}
-                          outerRadius={104}
-                          paddingAngle={2}
-                          cornerRadius={3}
-                          stroke="none"
-                        >
-                          {platformData.map((entry, index) => (
-                            <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip content={<PlatformTooltip activeBrand={brand} />} wrapperStyle={{ zIndex: 9999 }} />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  ) : null}
-                </div>
+              <div className="crm-gpu-layer h-[320px] min-w-0">
+                {platformData.length > 0 && isMounted ? (
+                  <ResponsiveContainer id="platform-chart" width="100%" height={320}>
+                    <PieChart>
+                      <Pie
+                        data={platformData}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius={70}
+                        outerRadius={104}
+                        paddingAngle={2}
+                        cornerRadius={3}
+                        stroke="none"
+                      >
+                        {platformData.map((entry, index) => (
+                          <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        content={<PlatformTooltip activeBrand={brand} />}
+                        wrapperStyle={{ zIndex: 9999 }}
+                      />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-white/58">
+                    No platform totals found in the current filters.
+                  </div>
+                )}
+              </div>
             </div>
           </section>
 
           <section className="grid items-start gap-3 sm:gap-4 xl:grid-cols-[1.15fr_1fr]">
             <div className="grid gap-4">
-              <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+              <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
                 <div className="mb-3 sm:mb-6">
                   <h2 className="text-xl font-semibold">Top campaigns</h2>
-                  <p className="mt-1 text-sm text-white/58">Lead count by campaign name.</p>
+                  <p className="mt-1 text-sm text-white/58">
+                    Descending campaign totals from the DATA summary.
+                  </p>
                 </div>
                 <div className={`crm-gpu-layer ${brand === "redwing" ? "h-[390px]" : "h-[330px]"} min-w-0`}>
-                  {isMounted ? (
-                    <ResponsiveContainer id="campaign-chart" width="100%" height={brand === "redwing" ? 390 : 330} minWidth={0} minHeight={0}>
+                  {campaignData.length > 0 && isMounted ? (
+                    <ResponsiveContainer
+                      id="campaign-chart"
+                      width="100%"
+                      height={brand === "redwing" ? 390 : 330}
+                    >
                       <BarChart data={campaignData}>
                         <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                         <XAxis
@@ -1569,16 +1662,20 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         <Bar dataKey="leads" fill={chartPrimary} radius={[12, 12, 0, 0]} activeBar={{ stroke: "none" }} />
                       </BarChart>
                     </ResponsiveContainer>
-                  ) : null}
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-white/58">
+                      No campaign totals found in the current filters.
+                    </div>
+                  )}
                 </div>
               </div>
 
               {brand === "all" ? (
-                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
                   <div className="mb-8">
                     <h2 className="text-xl font-semibold">Today Campaign Leads</h2>
                     <p className="mt-1 text-sm text-white/58">
-                      New leads by campaign for today, from 12:00 AM to 11:59 PM IST.
+                      Today&apos;s campaign totals from the latest DATA summary row.
                     </p>
                   </div>
                   <div className="space-y-3">
@@ -1596,34 +1693,38 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       ))
                     ) : (
                       <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-5 text-sm text-white/58">
-                        No leads found for today in IST.
+                        No leads found for today in DATA.
                       </div>
                     )}
                   </div>
                 </div>
               ) : null}
-
             </div>
 
             <div className="grid gap-4">
               {brand !== "redwing" ? (
-                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
                   <div className="mb-3 sm:mb-6">
                     <h2 className="text-xl font-semibold">Bigwing Yes / No</h2>
-                    <p className="mt-1 text-sm text-white/58">Response count from the Bigwing whitefield / hoodi question.</p>
+                    <p className="mt-1 text-sm text-white/58">
+                      Response count from the DATA Bigwing response arrays.
+                    </p>
                   </div>
                   <div className="crm-gpu-layer h-[160px] min-w-0">
                     {bigwingResponseData.length > 0 ? (
                       isMounted ? (
-                        <ResponsiveContainer id="bigwing-chart" width="100%" height={160} minWidth={0} minHeight={0}>
-                          <BarChart
-                            data={bigwingResponseData}
-                            layout="vertical"
-                            margin={{ left: 0, right: 0 }}
-                          >
+                        <ResponsiveContainer id="bigwing-chart" width="100%" height={160}>
+                          <BarChart data={bigwingResponseData} layout="vertical">
                             <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={false} />
                             <XAxis type="number" stroke="rgba(255,255,255,0.5)" />
-                            <YAxis dataKey="response" type="category" width={30} stroke="rgba(255,255,255,0.5)" interval={0} tick={{ fontSize: 10 }} />
+                            <YAxis
+                              dataKey="response"
+                              type="category"
+                              width={30}
+                              stroke="rgba(255,255,255,0.5)"
+                              interval={0}
+                              tick={{ fontSize: 10 }}
+                            />
                             <Tooltip
                               content={<GlassMetricTooltip labelHeading="Response" activeBrand={brand} />}
                               cursor={{ fill: chartHoverCursor }}
@@ -1635,7 +1736,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       ) : null
                     ) : (
                       <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-white/58">
-                        No Bigwing yes / no values found in the filtered rows.
+                        No Bigwing yes / no values found in the filtered summaries.
                       </div>
                     )}
                   </div>
@@ -1643,15 +1744,17 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "bigwing" ? (
-                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
                   <div className="mb-5">
                     <h2 className="text-xl font-semibold">Redwing Locations</h2>
-                    <p className="mt-1 text-sm text-white/58">Top Redwing location values from the filtered rows.</p>
+                    <p className="mt-1 text-sm text-white/58">
+                      Top Redwing locations from the DATA location count arrays.
+                    </p>
                   </div>
                   <div style={{ height: redwingLocationChartHeight }} className="crm-gpu-layer min-w-0">
                     {redwingLocationData.length > 0 ? (
                       isMounted ? (
-                        <ResponsiveContainer id="redwing-chart" width="100%" height={redwingLocationChartHeight} minWidth={0} minHeight={0}>
+                        <ResponsiveContainer id="redwing-chart" width="100%" height={redwingLocationChartHeight}>
                           <BarChart
                             data={redwingLocationData}
                             layout="vertical"
@@ -1679,7 +1782,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       ) : null
                     ) : (
                       <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-white/58">
-                        No Redwing location values found in the filtered rows.
+                        No Redwing location values found in the filtered summaries.
                       </div>
                     )}
                   </div>
@@ -1687,11 +1790,11 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               ) : null}
 
               {brand !== "all" ? (
-                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+                <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
                   <div className="mb-3 sm:mb-6">
                     <h2 className="text-xl font-semibold">View all leads</h2>
                     <p className="mt-1 text-sm text-white/58">
-                      Open a searchable glass table for every {BRAND_CONFIG[brand].label} lead.
+                      Open the searchable table for every {BRAND_CONFIG[brand].label} lead.
                     </p>
                   </div>
                   <Button
@@ -1704,20 +1807,19 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                   </Button>
                 </div>
               ) : null}
-
             </div>
           </section>
 
           {brand === "redwing" ? (
-            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 sm:p-5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
+            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
               <div className="mb-3 sm:mb-6">
                 <h2 className="text-xl font-semibold">Digital performance</h2>
                 <p className="mt-1 text-sm text-white/58">
-                  Trends for actual numbers, contacted, and interested leads over time.
+                  Trends for actual, contacted, and interested digital leads.
                 </p>
               </div>
               <div className="crm-gpu-layer h-[340px] min-w-0">
-                {isMounted ? (
+                {filteredDigitalLeads.length > 0 && isMounted ? (
                   <ResponsiveContainer id="digital-performance-chart" width="100%" height={340}>
                     <LineChart data={filteredDigitalLeads}>
                       <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
@@ -1725,7 +1827,7 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         dataKey="date"
                         stroke="rgba(255,255,255,0.5)"
                         tick={{ fontSize: 10 }}
-                        tickFormatter={(val) => val.split("-").slice(1).join("/")}
+                        tickFormatter={(value) => value.split("-").slice(1).join("/")}
                       />
                       <YAxis stroke="rgba(255,255,255,0.5)" width={30} tick={{ fontSize: 10 }} />
                       <Tooltip
@@ -1741,33 +1843,16 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                         wrapperStyle={{ zIndex: 9999 }}
                       />
                       <Legend wrapperStyle={{ fontSize: "10px", marginTop: "10px" }} />
-                      <Line
-                        type="monotone"
-                        dataKey="actual"
-                        name="Actual"
-                        stroke="#ffffff"
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="contacted"
-                        name="Contacted"
-                        stroke="#8de0ff"
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="interested"
-                        name="Interested"
-                        stroke="#eefbff"
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                      />
+                      <Line type="monotone" dataKey="actual" name="Actual" stroke="#ffffff" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="contacted" name="Contacted" stroke="#8de0ff" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="interested" name="Interested" stroke="#eefbff" strokeWidth={2} dot={{ r: 3 }} />
                     </LineChart>
                   </ResponsiveContainer>
-                ) : null}
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-white/58">
+                    No digital performance rows found in the selected date range.
+                  </div>
+                )}
               </div>
             </div>
           ) : null}
@@ -1839,7 +1924,9 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                     <div className="crm-surface-radius border border-white/12 bg-white/8 p-4">
                       <div className="mb-3 flex items-start justify-between gap-4">
                         <div>
-                          <p className="text-[11px] uppercase tracking-[0.22em] text-white/52">Prompt</p>
+                          <p className="text-[11px] uppercase tracking-[0.22em] text-white/52">
+                            Prompt
+                          </p>
                           <p className="mt-1 text-sm text-white/68">
                             Last imported date:{" "}
                             <span className="font-semibold text-white">
@@ -1874,33 +1961,22 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
                       />
                     </Field>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-end gap-3">
                       <Button
                         variant="ghost"
                         className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                        onClick={handleWorkbookRefresh}
-                        disabled={isWorkbookRefreshing}
+                        onClick={closeDigitalModal}
                       >
-                        <RefreshCw className={`h-4 w-4 ${isWorkbookRefreshing ? "animate-spin" : ""}`} />
-                        {isWorkbookRefreshing ? "Refreshing..." : "Refresh DATA"}
+                        Close
                       </Button>
-                      <div className="flex justify-end gap-3">
-                        <Button
-                          variant="ghost"
-                          className="rounded-full border border-white/12 bg-white/8 px-5 py-1 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
-                          onClick={closeDigitalModal}
-                        >
-                          Close
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className="rounded-full border border-white/70 bg-white px-5 py-1 font-medium text-[#103a64] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#103a64]"
-                          onClick={handleDigitalImportSubmit}
-                          disabled={isDigitalLoading || digitalResponseText.trim().length === 0}
-                        >
-                          {isDigitalLoading ? "Appending..." : "Append to DATA"}
-                        </Button>
-                      </div>
+                      <Button
+                        variant="ghost"
+                        className="rounded-full border border-white/70 bg-white px-5 py-1 font-medium text-[#103a64] shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-[#103a64]"
+                        onClick={handleDigitalImportSubmit}
+                        disabled={isDigitalLoading || digitalResponseText.trim().length === 0}
+                      >
+                        {isDigitalLoading ? "Appending..." : "Append to DATA"}
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -1918,7 +1994,6 @@ export function DashboardClient({ workbook, initialBrand }: DashboardClientProps
               </div>
             </div>
           ) : null}
-
         </div>
       </div>
     </div>

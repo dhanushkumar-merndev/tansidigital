@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 export type MetaCampaignSpendEntry = {
   accountCurrency: string;
   campaignName: string;
+  cpc: number;
   dateStart: string;
   dateStop: string;
   spend: number;
@@ -12,6 +13,7 @@ type MetaInsightsResponse = {
   data?: Array<{
     account_currency?: unknown;
     campaign_name?: unknown;
+    cpc?: unknown;
     date_start?: unknown;
     date_stop?: unknown;
     spend?: unknown;
@@ -102,7 +104,7 @@ export async function fetchMetaCampaignSpend({
   let nextUrl: URL | null = new URL(`${META_API_BASE_URL}/${adAccountId}/insights`);
   nextUrl.searchParams.set(
     "fields",
-    "account_currency,campaign_name,date_start,date_stop,spend",
+    "account_currency,campaign_name,cpc,date_start,date_stop,spend",
   );
   nextUrl.searchParams.set("level", "campaign");
   nextUrl.searchParams.set("time_increment", "1");
@@ -140,6 +142,7 @@ export async function fetchMetaCampaignSpend({
             ? row.account_currency.trim().toUpperCase()
             : "INR",
         campaignName: typeof row.campaign_name === "string" ? row.campaign_name.trim() : "",
+        cpc: parseSpendValue(row.cpc),
         dateStart: typeof row.date_start === "string" ? row.date_start.trim() : "",
         dateStop: typeof row.date_stop === "string" ? row.date_stop.trim() : "",
         spend: parseSpendValue(row.spend),

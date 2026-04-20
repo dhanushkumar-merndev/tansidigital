@@ -117,7 +117,6 @@ select option {
   backface-visibility: hidden;
 }
 
-/* Universal fix for all Recharts focus borders */
 .recharts-wrapper *,
 .recharts-wrapper *:focus,
 .recharts-surface,

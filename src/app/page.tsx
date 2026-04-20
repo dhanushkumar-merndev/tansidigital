@@ -5,7 +5,7 @@ import { DashboardClient } from "@/components/dashboard-client";
 import { PinLogin } from "@/components/pin-login";
 import { isAuthenticated } from "@/lib/auth";
 import { getBrandAssets, normalizeBrand } from "@/lib/brands";
-import { getWorkbookData } from "@/lib/sheets";
+import { getDashboardData } from "@/lib/sheets";
 
 type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -50,7 +50,7 @@ export default async function Home({ searchParams }: PageProps) {
     return <PinLogin />;
   }
 
-  const workbook = await getWorkbookData();
+  const workbook = await getDashboardData();
 
   return <DashboardClient workbook={workbook} initialBrand={initialBrand} />;
 }
