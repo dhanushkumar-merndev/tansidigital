@@ -79,6 +79,8 @@ type DashboardCard = {
 type TimelineDatum = {
   bigwingLeads: number;
   date: string;
+  fbLeads: number;
+  igLeads: number;
   label: string;
   leads: number;
   redwingLeads: number;
@@ -88,6 +90,8 @@ type TimelineDatum = {
 
 type PlatformDatum = {
   bigwingValue: number;
+  fbValue?: number;
+  igValue?: number;
   name: string;
   redwingValue: number;
   value: number;
@@ -252,13 +256,15 @@ function TimelineTooltip({
       </div>
       <div className="text-base font-bold text-white">{point.tooltipLabel}</div>
       <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-        {activeBrand !== "redwing"
-          ? renderTooltipRow("Bigwing", point.bigwingLeads)
-          : null}
-        {activeBrand !== "bigwing"
-          ? renderTooltipRow("Redwing", point.redwingLeads)
-          : null}
-        {renderTooltipRow("Total", point.leads)}
+        {activeBrand === "all" ? (
+          <>
+            {renderTooltipRow("Bigwing", point.bigwingLeads)}
+            {renderTooltipRow("Redwing", point.redwingLeads)}
+            {renderTooltipRow("Total", point.leads)}
+          </>
+        ) : (
+          renderTooltipRow("Leads", point.leads)
+        )}
       </div>
     </div>
   );
@@ -268,9 +274,11 @@ function PlatformTooltip({
   active,
   payload,
   activeBrand,
+  isIndividualTab,
 }: {
   active?: boolean;
   activeBrand: Brand;
+  isIndividualTab?: boolean;
   payload?: Array<{ payload: PlatformDatum }>;
 }) {
   if (!active || !payload?.length) return null;
@@ -289,13 +297,23 @@ function PlatformTooltip({
       </div>
       <div className="text-base font-bold text-white">{point.name}</div>
       <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-        {activeBrand !== "redwing"
-          ? renderTooltipRow("Bigwing", point.bigwingValue)
-          : null}
-        {activeBrand !== "bigwing"
-          ? renderTooltipRow("Redwing", point.redwingValue)
-          : null}
-        {renderTooltipRow("Total", point.value)}
+        {isIndividualTab ? (
+          <>
+            {renderTooltipRow("IG", point.igValue ?? 0)}
+            {renderTooltipRow("FB", point.fbValue ?? 0)}
+            {renderTooltipRow("Total", (point.igValue ?? 0) + (point.fbValue ?? 0))}
+          </>
+        ) : (
+          <>
+            {activeBrand !== "redwing"
+              ? renderTooltipRow("Bigwing", point.bigwingValue)
+              : null}
+            {activeBrand !== "bigwing"
+              ? renderTooltipRow("Redwing", point.redwingValue)
+              : null}
+            {renderTooltipRow("Total", point.value)}
+          </>
+        )}
       </div>
     </div>
   );
@@ -473,6 +491,17 @@ function sumTabs(metricByTab: Record<string, number>, tabs: string[]) {
   return tabs.reduce((total, tab) => total + (metricByTab[tab] ?? 0), 0);
 }
 
+function sumPlatformMetricTabs(
+  platformCountsByTab: Record<string, DashboardPlatformCounts>,
+  tabs: string[],
+  platform: "fb" | "ig",
+) {
+  return tabs.reduce(
+    (total, tab) => total + (platformCountsByTab[tab]?.[platform] ?? 0),
+    0,
+  );
+}
+
 function syncBrandMetadata(brand: Brand) {
   if (typeof document === "undefined") return;
 
@@ -579,6 +608,14 @@ export function DashboardClient({
       document.body.style.overflow = "unset";
     };
   }, [isDigitalModalOpen]);
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      router.refresh();
+    }, 1800000);
+
+    return () => clearInterval(interval);
+  }, [router]);
 
   const hasSummaryData = workbook.dailySummaries.length > 0;
   const tabBrandLookup = workbook.tabBrandLookup;
@@ -845,12 +882,13 @@ export function DashboardClient({
     return formatCurrencyAmount(metaSpend.totalSpend, metaSpend.currency);
   }, [isMetaSpendLoading, metaSpend]);
 
+  const metaCpcAverage = matchedCampaigns.length > 0 ? metaCpcTotal / matchedCampaigns.length : 0;
   const metaCpcValue = React.useMemo(() => {
     if (isMetaSpendLoading) return "...";
     if (!metaSpend?.configured || matchedCampaigns.length === 0) return "--";
 
-    return formatCurrencyAmount(metaCpcTotal, metaSpend.currency);
-  }, [isMetaSpendLoading, matchedCampaigns.length, metaCpcTotal, metaSpend]);
+    return formatCurrencyAmount(metaCpcAverage, metaSpend.currency);
+  }, [isMetaSpendLoading, matchedCampaigns.length, metaCpcAverage, metaSpend]);
 
   const metaCostHint = React.useMemo(() => {
     if (isMetaSpendLoading) {
@@ -865,14 +903,19 @@ export function DashboardClient({
       return "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to enable Meta cost.";
     }
 
-    if (selectedTabs.length === 0) {
-      return "No campaigns available for the current selection.";
-    }
+    const matchedCampaignSet = new Set((metaSpend.campaigns ?? []).map((c) => c.name));
+    const unmatched = selectedTabs.filter((tab) => !matchedCampaignSet.has(tab));
 
-    return `${metaSpend.matchedCampaigns} matched campaign${
+    let hint = `${metaSpend.matchedCampaigns} matched campaign${
       metaSpend.matchedCampaigns === 1 ? "" : "s"
     } from Meta`;
-  }, [isMetaSpendLoading, metaSpend, metaSpendError, selectedTabs.length]);
+
+    if (unmatched.length > 0 && unmatched.length < selectedTabs.length) {
+      hint += ` (Missing: ${unmatched.join(", ")})`;
+    }
+
+    return hint;
+  }, [isMetaSpendLoading, metaSpend, metaSpendError, selectedTabs]);
 
   const metaCpcHint = React.useMemo(() => {
     if (isMetaSpendLoading) {
@@ -892,7 +935,7 @@ export function DashboardClient({
     }
 
     return campaignFilter === "all"
-      ? `Sum of ${matchedCampaigns.length} matched campaign CPC values.`
+      ? `Average of ${matchedCampaigns.length} matched campaign CPC values.`
       : "Live CPC from Meta for the selected campaign.";
   }, [campaignFilter, isMetaSpendLoading, matchedCampaigns.length, metaSpend, metaSpendError]);
 
@@ -900,7 +943,7 @@ export function DashboardClient({
     const totalLeadHint =
       campaignFilter === "all"
         ? brand === "all"
-          ? "Total leads across all selected campaigns in the date range"
+        ? `Total leads among ${selectedTabs.length} campaigns`
           : `${BRAND_CONFIG[brand].label} total leads in the selected date range`
         : "Total leads for the selected campaign";
 
@@ -985,6 +1028,8 @@ export function DashboardClient({
         timelineMap.set(hour, {
           bigwingLeads: 0,
           date: `${selectedIstDateKey} ${String(hour).padStart(2, "0")}`,
+          fbLeads: 0,
+          igLeads: 0,
           label: formatHourLabel(hour),
           leads: 0,
           redwingLeads: 0,
@@ -1026,10 +1071,14 @@ export function DashboardClient({
 
     return dateKeys.map((dateKey) => {
       const summary = summariesByDate.get(dateKey);
+      const igLeads = summary ? sumPlatformMetricTabs(summary.platformCountsByTab, selectedTabs, "ig") : 0;
+      const fbLeads = summary ? sumPlatformMetricTabs(summary.platformCountsByTab, selectedTabs, "fb") : 0;
 
       return {
         bigwingLeads: summary ? sumTabs(summary.leadCountsByTab, selectedBigwingTabs) : 0,
         date: dateKey,
+        fbLeads,
+        igLeads,
         label: dateKey.slice(8, 10),
         leads: summary ? sumTabs(summary.leadCountsByTab, selectedTabs) : 0,
         redwingLeads: summary ? sumTabs(summary.leadCountsByTab, selectedRedwingTabs) : 0,
@@ -1069,18 +1118,25 @@ export function DashboardClient({
       }
     }
 
+    const igTotal = bigwingIg + redwingIg;
+    const fbTotal = bigwingFb + redwingFb;
+
     return [
       {
         bigwingValue: bigwingIg,
+        fbValue: fbTotal,
+        igValue: igTotal,
         name: "IG",
         redwingValue: redwingIg,
-        value: bigwingIg + redwingIg,
+        value: igTotal,
       },
       {
         bigwingValue: bigwingFb,
+        fbValue: fbTotal,
+        igValue: igTotal,
         name: "FB",
         redwingValue: redwingFb,
-        value: bigwingFb + redwingFb,
+        value: fbTotal,
       },
     ].filter((item) => item.value > 0);
   }, [aggregatedPlatformCountsByTab, selectedTabs, tabBrandLookup]);
@@ -1090,6 +1146,8 @@ export function DashboardClient({
       selectedTabs
         .map((tab) => ({
           campaign: tab,
+          fb: aggregatedPlatformCountsByTab[tab]?.fb ?? 0,
+          ig: aggregatedPlatformCountsByTab[tab]?.ig ?? 0,
           leads:
             aggregatedTopCampaignCountsByTab[tab] ??
             aggregatedLeadCountsByTab[tab] ??
@@ -1098,7 +1156,7 @@ export function DashboardClient({
         .filter((item) => item.leads > 0)
         .sort((left, right) => right.leads - left.leads)
         .slice(0, 8),
-    [aggregatedLeadCountsByTab, aggregatedTopCampaignCountsByTab, selectedTabs],
+    [aggregatedLeadCountsByTab, aggregatedPlatformCountsByTab, aggregatedTopCampaignCountsByTab, selectedTabs],
   );
 
   const todayCampaignData = React.useMemo(() => {
@@ -1355,21 +1413,10 @@ export function DashboardClient({
                   Campaign analytics
                 </h1>
                 <p className="mt-1 max-w-3xl text-xs text-white/68 sm:mt-2 sm:text-sm">
-                  Live DATA-sheet summary dashboard with campaign totals, Meta cost,
-                  Meta CPC, platform mix, response breakdowns, and digital import
-                  analytics.
+                  Live analytics hub integrating Meta spend and Google Sheets lead
+                  data, delivering real-time insights into campaign performance,
+                  platform splits, and regional rankings for Redwing and Bigwing.
                 </p>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-white/62">
-                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
-                    Tabs: {workbook.tabs.length}
-                  </span>
-                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
-                    Campaigns in view: {selectedTabs.length}
-                  </span>
-                  <span className="rounded-full border border-white/12 bg-white/8 px-3 py-1">
-                    Latest summary: {latestSummaryDate ?? "No rows"}
-                  </span>
-                </div>
                 {workbook.error ? (
                   <p className="mt-3 rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
                     {workbook.error}
@@ -1612,7 +1659,7 @@ export function DashboardClient({
                         ))}
                       </Pie>
                       <Tooltip
-                        content={<PlatformTooltip activeBrand={brand} />}
+                        content={<PlatformTooltip activeBrand={brand} isIndividualTab={brand !== "all" || campaignFilter !== "all"} />}
                         wrapperStyle={{ zIndex: 9999 }}
                       />
                       <Legend />

@@ -356,7 +356,7 @@ function normalizeBrandValue(value: string): ConcreteBrand | null {
 
 function splitMappingValues(value: string) {
   return value
-    .split(/[,\n|]+/)
+    .split(/[\n|]+/)
     .map((item) => expandAliases(item).trim())
     .filter(Boolean);
 }

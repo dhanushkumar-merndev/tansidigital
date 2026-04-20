@@ -106,26 +106,42 @@ function findBestCampaignMatch(
   campaignName: string,
 ) {
   const normalizedCampaignName = normalizeCampaignKey(campaignName);
-  const exactMatch = requestedCampaigns.find(
-    (campaign) => campaign.aliasKeys.includes(normalizedCampaignName),
+
+  // 1. Exact match against any alias keys
+  const exactMatch = requestedCampaigns.find((campaign) =>
+    campaign.aliasKeys.includes(normalizedCampaignName),
   );
+  if (exactMatch) return exactMatch;
 
-  if (exactMatch) {
-    return exactMatch;
-  }
+  // 2. Exact match after stripping common suffixes/punctuation
+  const cleanedCampaignName = normalizedCampaignName
+    .replace(/[-_:.\|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
+  const cleanedExactMatch = requestedCampaigns.find((campaign) =>
+    campaign.aliasKeys.some((alias) => {
+      const cleanedAlias = alias
+        .replace(/[-_:.\|]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return cleanedAlias === cleanedCampaignName;
+    }),
+  );
+  if (cleanedExactMatch) return cleanedExactMatch;
+
+  // 3. Partial matches (prioritizing longest alias first for precision)
   const partialMatches = requestedCampaigns
-    .filter(
-      (campaign) =>
-        campaign.aliasKeys.some(
-          (aliasKey) =>
-            normalizedCampaignName.includes(aliasKey) ||
-            aliasKey.includes(normalizedCampaignName),
-        ),
+    .filter((campaign) =>
+      campaign.aliasKeys.some(
+        (aliasKey) =>
+          normalizedCampaignName.includes(aliasKey) ||
+          aliasKey.includes(normalizedCampaignName),
+      ),
     )
     .sort((left, right) => {
-      const longestLeft = Math.max(...left.aliasKeys.map((aliasKey) => aliasKey.length));
-      const longestRight = Math.max(...right.aliasKeys.map((aliasKey) => aliasKey.length));
+      const longestLeft = Math.max(...left.aliasKeys.map((k) => k.length));
+      const longestRight = Math.max(...right.aliasKeys.map((k) => k.length));
       return longestRight - longestLeft;
     });
 
