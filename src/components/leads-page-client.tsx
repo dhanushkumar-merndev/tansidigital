@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  LoaderCircle,
   Maximize2,
   Minimize2,
   Search,
@@ -15,7 +14,7 @@ import {
 } from "lucide-react";
 import { ReactLenis, type LenisRef } from "lenis/react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { useTransition } from "react";
 import { type DateRange } from "react-day-picker";
@@ -42,6 +41,11 @@ const AUTO_REFRESH_THROTTLE_MS = 15_000;
 
 type LeadTableColumn = {
   key: string;
+  label: string;
+};
+
+type CampaignChipGroup = {
+  campaigns: string[];
   label: string;
 };
 
@@ -106,7 +110,11 @@ function syncBrandMetadata(brand: ConcreteBrand) {
   manifest.href = `/brand-manifest?brand=${brand}`;
 }
 
-function getLeadCellValue(row: LeadsTableRow, columnKey: string) {
+function getLeadCellValue(
+  row: LeadsTableRow,
+  columnKey: string,
+  campaignLabels: Record<string, string>,
+) {
   switch (columnKey) {
     case "tab_name":
       return row.tabName;
@@ -115,7 +123,7 @@ function getLeadCellValue(row: LeadsTableRow, columnKey: string) {
     case "date":
       return row.date ?? "";
     case "campaign":
-      return row.campaign;
+      return campaignLabels[row.campaign] ?? row.campaign;
     case "ad_name":
       return row.adName;
     case "form_name":
@@ -157,13 +165,12 @@ export function LeadsPageClient({
   initialQuery,
 }: LeadsPageClientProps) {
   const [isPending, startTransition] = useTransition();
-  const [isBrandPending, startBrandTransition] = useTransition();
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const autoRefreshTimestampRef = React.useRef(0);
   const campaignScrollRef = React.useRef<HTMLDivElement | null>(null);
   const tableScrollRef = React.useRef<LenisRef | null>(null);
+  const requestSequenceRef = React.useRef(0);
   const suppressChipClickRef = React.useRef(false);
   const dragStateRef = React.useRef<{
     moved: boolean;
@@ -171,6 +178,9 @@ export function LeadsPageClient({
     startScrollLeft: number;
     startX: number;
   } | null>(null);
+  const [pageData, setPageData] = React.useState(data);
+  const [appliedQuery, setAppliedQuery] = React.useState(initialQuery);
+  const [isClientLoading, setIsClientLoading] = React.useState(false);
   const [brand, setBrand] = React.useState<ConcreteBrand>(initialBrand);
   const [selectedCampaigns, setSelectedCampaigns] = React.useState<string[]>(
     initialQuery.campaigns,
@@ -186,16 +196,63 @@ export function LeadsPageClient({
   );
   const [isTableExpanded, setIsTableExpanded] = React.useState(false);
   const columns = FIXED_COLUMNS;
-  const currentPage = data.page;
-  const totalPages = data.totalPages;
-  const rowsPerPage = data.pageSize;
-  const rows = data.rows;
+  const currentPage = pageData.page;
+  const totalPages = pageData.totalPages;
+  const rowsPerPage = pageData.pageSize;
+  const rows = pageData.rows;
+  const campaignChipGroups = React.useMemo<CampaignChipGroup[]>(() => {
+    const groups = new Map<string, string[]>();
+
+    pageData.campaignOptions.forEach((campaign) => {
+      const label = pageData.campaignLabels[campaign] ?? campaign;
+      const existing = groups.get(label) ?? [];
+
+      if (!existing.includes(campaign)) {
+        groups.set(label, [...existing, campaign]);
+      }
+    });
+
+    return Array.from(groups.entries()).map(([label, campaigns]) => ({
+      campaigns,
+      label,
+    }));
+  }, [pageData.campaignLabels, pageData.campaignOptions]);
+
+  const buildDateParam = React.useCallback((date: Date | undefined) => {
+    return date ? date.toISOString().slice(0, 10) : null;
+  }, []);
+
+  const buildQueryParams = React.useCallback((query: LeadsPageQuery) => {
+    const params = new URLSearchParams();
+    params.set("brand", query.brand);
+
+    query.campaigns.forEach((campaign) => params.append("campaign", campaign));
+
+    if (query.q) {
+      params.set("q", query.q);
+    }
+
+    if (query.from) {
+      params.set("from", query.from);
+    }
+
+    if (query.to) {
+      params.set("to", query.to);
+    }
+
+    params.set("sort", query.sort);
+
+    if (query.page > 1) {
+      params.set("page", String(query.page));
+    }
+
+    return params;
+  }, []);
 
   React.useEffect(() => {
+    setPageData(data);
+    setAppliedQuery(initialQuery);
     setBrand(initialBrand);
-  }, [initialBrand]);
-
-  React.useEffect(() => {
     setSelectedCampaigns(initialQuery.campaigns);
     setSearchTerm(initialQuery.q);
     setDateRange({
@@ -203,7 +260,7 @@ export function LeadsPageClient({
       to: parseDateParam(initialQuery.to),
     });
     setSortDirection(initialQuery.sort);
-  }, [initialQuery.campaigns, initialQuery.from, initialQuery.q, initialQuery.sort, initialQuery.to]);
+  }, [data, initialBrand, initialQuery]);
 
   const scrollTableToTop = React.useCallback(() => {
     tableScrollRef.current?.lenis?.scrollTo(0, { immediate: true });
@@ -218,7 +275,17 @@ export function LeadsPageClient({
     updateMetadata(brand);
   }, [brand, updateMetadata]);
 
-  const replaceQuery = React.useCallback(
+  const updateUrl = React.useCallback((query: LeadsPageQuery) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = buildQueryParams(query);
+    const nextUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, [buildQueryParams, pathname]);
+
+  const fetchLeadsData = React.useCallback(
     (
       nextValues: Partial<{
         brand: ConcreteBrand;
@@ -229,80 +296,106 @@ export function LeadsPageClient({
         sort: LeadsSortDirection;
         to: string | null;
       }>,
-      transition: (callback: () => void) => void = startTransition,
     ) => {
-      const params = new URLSearchParams(searchParams.toString());
       const nextBrand = nextValues.brand ?? brand;
       const nextCampaigns = nextValues.campaigns ?? selectedCampaigns;
       const nextSearch = nextValues.q ?? deferredSearch.trim();
-      const nextFrom =
-        nextValues.from ?? (dateRange?.from ? dateRange.from.toISOString().slice(0, 10) : null);
-      const nextTo =
-        nextValues.to ?? (dateRange?.to ? dateRange.to.toISOString().slice(0, 10) : null);
+      const nextFrom = nextValues.from ?? buildDateParam(dateRange?.from);
+      const nextTo = nextValues.to ?? buildDateParam(dateRange?.to);
       const nextSort = nextValues.sort ?? sortDirection;
       const nextPage = nextValues.page ?? currentPage;
+      const nextQuery: LeadsPageQuery = {
+        brand: nextBrand,
+        campaigns: nextCampaigns,
+        from: nextFrom,
+        page: nextPage,
+        q: nextSearch,
+        sort: nextSort,
+        to: nextTo,
+      };
+      const params = buildQueryParams(nextQuery);
+      const requestId = requestSequenceRef.current + 1;
+      requestSequenceRef.current = requestId;
 
-      params.set("brand", nextBrand);
-      params.delete("campaign");
-      nextCampaigns.forEach((campaign) => params.append("campaign", campaign));
+      updateUrl(nextQuery);
+      setIsClientLoading(true);
 
-      if (nextSearch) {
-        params.set("q", nextSearch);
-      } else {
-        params.delete("q");
-      }
+      void fetch(`/api/leads?${params.toString()}`, {
+        cache: "no-store",
+        credentials: "same-origin",
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const fallbackMessage = response.status === 401 ? "Unauthorized." : "Unable to load leads right now.";
+            const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(payload?.error || fallbackMessage);
+          }
 
-      if (nextFrom) {
-        params.set("from", nextFrom);
-      } else {
-        params.delete("from");
-      }
+          return response.json() as Promise<LeadsPageData>;
+        })
+        .then((nextData) => {
+          if (requestSequenceRef.current !== requestId) {
+            return;
+          }
 
-      if (nextTo) {
-        params.set("to", nextTo);
-      } else {
-        params.delete("to");
-      }
+          const nextAppliedQuery: LeadsPageQuery = {
+            ...nextQuery,
+            campaigns: nextQuery.campaigns.filter((campaign) =>
+              nextData.campaignOptions.includes(campaign),
+            ),
+            page: nextData.page,
+          };
 
-      params.set("sort", nextSort);
-      if (nextPage > 1) {
-        params.set("page", String(nextPage));
-      } else {
-        params.delete("page");
-      }
+          setPageData(nextData);
+          setAppliedQuery(nextAppliedQuery);
+          updateUrl(nextAppliedQuery);
+        })
+        .catch((error: unknown) => {
+          if (requestSequenceRef.current !== requestId) {
+            return;
+          }
 
-      transition(() => {
-        router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-      });
+          const message =
+            error instanceof Error ? error.message : "Unable to load leads right now.";
+
+          setPageData((current) => ({
+            ...current,
+            error: message,
+          }));
+        })
+        .finally(() => {
+          if (requestSequenceRef.current === requestId) {
+            setIsClientLoading(false);
+          }
+        });
     },
     [
       brand,
+      buildDateParam,
+      buildQueryParams,
       currentPage,
       dateRange,
       deferredSearch,
-      pathname,
-      router,
-      searchParams,
       selectedCampaigns,
       sortDirection,
-      startTransition,
+      updateUrl,
     ],
   );
 
   React.useEffect(() => {
-    if (deferredSearch.trim() === initialQuery.q) {
+    if (deferredSearch.trim() === appliedQuery.q) {
       return;
     }
 
-    replaceQuery({ page: 1, q: deferredSearch.trim() });
-  }, [deferredSearch, initialQuery.q, replaceQuery]);
+    fetchLeadsData({ page: 1, q: deferredSearch.trim() });
+  }, [appliedQuery.q, deferredSearch, fetchLeadsData]);
 
   const requestWorkbookRefresh = React.useEffectEvent(() => {
     if (typeof document === "undefined" || document.visibilityState !== "visible") {
       return;
     }
 
-    if (isPending || isBrandPending) {
+    if (isPending || isClientLoading) {
       return;
     }
 
@@ -363,31 +456,27 @@ export function LeadsPageClient({
   }, [isTableExpanded, scrollTableToTop]);
 
   function handleBrandChange(nextBrand: ConcreteBrand) {
-    if (nextBrand === brand || isBrandPending) {
+    if (nextBrand === brand || isClientLoading) {
       return;
     }
 
-    startBrandTransition(() => {
-      setBrand(nextBrand);
-      setSelectedCampaigns([]);
-      replaceQuery(
-        {
-          brand: nextBrand,
-          campaigns: [],
-          page: 1,
-        },
-        startBrandTransition,
-      );
+    setBrand(nextBrand);
+    setSelectedCampaigns([]);
+    fetchLeadsData({
+      brand: nextBrand,
+      campaigns: [],
+      page: 1,
     });
   }
 
-  function toggleCampaign(campaign: string) {
-    const nextCampaigns = selectedCampaigns.includes(campaign)
-      ? selectedCampaigns.filter((item) => item !== campaign)
-      : [...selectedCampaigns, campaign];
+  function toggleCampaignGroup(campaigns: string[]) {
+    const hasSelectedCampaign = campaigns.some((campaign) => selectedCampaigns.includes(campaign));
+    const nextCampaigns = hasSelectedCampaign
+      ? selectedCampaigns.filter((item) => !campaigns.includes(item))
+      : Array.from(new Set([...selectedCampaigns, ...campaigns]));
 
     setSelectedCampaigns(nextCampaigns);
-    replaceQuery({ campaigns: nextCampaigns, page: 1 });
+    fetchLeadsData({ campaigns: nextCampaigns, page: 1 });
   }
 
   function handleCampaignWheel(event: React.WheelEvent<HTMLDivElement>) {
@@ -444,7 +533,7 @@ export function LeadsPageClient({
     const headerLabels = ["Sl No", ...exportColumns.map((column) => column.label)];
     const csvRows = rows.map((row, index) => [
       String((currentPage - 1) * rowsPerPage + index + 1),
-      ...exportColumns.map((column) => getLeadCellValue(row, column.key) || "-"),
+      ...exportColumns.map((column) => getLeadCellValue(row, column.key, pageData.campaignLabels) || "-"),
     ]);
     const csv = [headerLabels, ...csvRows]
       .map((line) => line.map((cell) => escapeCsvCell(cell)).join(","))
@@ -541,7 +630,7 @@ export function LeadsPageClient({
                     {(currentPage - 1) * rowsPerPage + rowIndex + 1}
                   </td>
                   {columns.map((column) => {
-                    const cellValue = getLeadCellValue(row, column.key) || "-";
+                    const cellValue = getLeadCellValue(row, column.key, pageData.campaignLabels) || "-";
                     const isEmail = column.key === "email";
                     const isTabName = column.key === "tab_name";
                     const isEmailTruncated = !isTableExpanded && isEmail && cellValue.length > 25;
@@ -633,14 +722,14 @@ export function LeadsPageClient({
       >
         <span className="text-center text-sm text-white/58">
           Showing {(currentPage - 1) * rowsPerPage + 1}–
-          {Math.min(currentPage * rowsPerPage, data.total)} of {data.total} leads
+          {Math.min(currentPage * rowsPerPage, pageData.total)} of {pageData.total} leads
         </span>
         <div className="flex w-full items-center justify-between gap-2 lg:w-auto lg:justify-end">
           <Button
             variant="ghost"
             className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
             disabled={currentPage <= 1}
-            onClick={() => replaceQuery({ page: Math.max(1, currentPage - 1) })}
+            onClick={() => fetchLeadsData({ page: Math.max(1, currentPage - 1) })}
           >
             <ChevronLeft className="h-3.5 w-3.5" />
             Prev
@@ -652,7 +741,7 @@ export function LeadsPageClient({
             variant="ghost"
             className="h-9 gap-1.5 rounded-full border border-white/12 bg-white/8 px-3 text-xs text-white/82 shadow-none backdrop-blur-xl hover:bg-white/12 hover:text-white disabled:opacity-30"
             disabled={currentPage >= totalPages}
-            onClick={() => replaceQuery({ page: Math.min(totalPages, currentPage + 1) })}
+            onClick={() => fetchLeadsData({ page: Math.min(totalPages, currentPage + 1) })}
           >
             Next
             <ChevronRight className="h-3.5 w-3.5" />
@@ -673,7 +762,7 @@ export function LeadsPageClient({
                   <h3 className="text-sm font-semibold text-white">Leads table</h3>
                   <p className="text-xs text-white/58">
                     Showing {(currentPage - 1) * rowsPerPage + 1}–
-                    {Math.min(currentPage * rowsPerPage, data.total)} of {data.total} leads
+                    {Math.min(currentPage * rowsPerPage, pageData.total)} of {pageData.total} leads
                   </p>
                 </div>
                 <Button
@@ -694,7 +783,14 @@ export function LeadsPageClient({
 
       <div className="min-h-screen">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
+          <section className="crm-surface-radius relative border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
+            <div
+              className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] overflow-hidden rounded-t-[inherit] transition-opacity duration-200 ${
+                isClientLoading ? "opacity-100" : "opacity-0"
+              }`}
+            >
+              <div className="mx-auto h-full w-1/3 animate-pulse rounded-full bg-white/70" />
+            </div>
             <div className="flex flex-col gap-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -716,12 +812,12 @@ export function LeadsPageClient({
                     </Button>
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
                       <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" />
-                      {BRAND_CONFIG[brand].label} Leads {data.total}
+                      {BRAND_CONFIG[brand].label} Leads {pageData.total}
                     </div>
                   </div>
-                  {data.error ? (
+                  {pageData.error ? (
                     <p className="rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
-                      {data.error}
+                      {pageData.error}
                     </p>
                   ) : null}
                 </div>
@@ -729,13 +825,11 @@ export function LeadsPageClient({
                 <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                   {leadBrandOptions.map((option) => {
                     const selected = option === brand;
-                    const loading = isBrandPending && selected;
 
                     return (
                       <Button
                         key={option}
                         variant="ghost"
-                        aria-busy={loading}
                         className={
                           selected
                             ? "min-w-[80px] gap-2 rounded-full border border-white/70 bg-white px-3 py-1 text-xs font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black sm:min-w-[104px] sm:px-5 sm:text-sm"
@@ -743,7 +837,6 @@ export function LeadsPageClient({
                         }
                         onClick={() => handleBrandChange(option)}
                       >
-                        {loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
                         {BRAND_CONFIG[option].label}
                       </Button>
                     );
@@ -797,9 +890,9 @@ export function LeadsPageClient({
                             ? "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/70 bg-white px-3 text-[11px] font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
                             : "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/16 bg-white/10 px-3 text-[11px] text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
                         }
-                        onClick={() => {
-                          setSortDirection("desc");
-                          replaceQuery({ page: 1, sort: "desc" });
+                          onClick={() => {
+                            setSortDirection("desc");
+                            fetchLeadsData({ page: 1, sort: "desc" });
                         }}
                       >
                         <ArrowDownWideNarrow className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
@@ -812,9 +905,9 @@ export function LeadsPageClient({
                             ? "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/70 bg-white px-3 text-[11px] font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
                             : "h-[42px] w-full shrink-0 gap-1 rounded-[18px] border border-white/16 bg-white/10 px-3 text-[11px] text-white/72 backdrop-blur-xl hover:bg-white/14 hover:text-white sm:h-[48px] sm:w-auto sm:gap-1.5 sm:rounded-[22px] sm:px-4 sm:text-xs"
                         }
-                        onClick={() => {
-                          setSortDirection("asc");
-                          replaceQuery({ page: 1, sort: "asc" });
+                          onClick={() => {
+                            setSortDirection("asc");
+                            fetchLeadsData({ page: 1, sort: "asc" });
                         }}
                       >
                         <ArrowUpNarrowWide className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
@@ -825,14 +918,10 @@ export function LeadsPageClient({
                           date={dateRange}
                           onSelect={(nextRange) => {
                             setDateRange(nextRange);
-                            replaceQuery({
-                              from: nextRange?.from
-                                ? nextRange.from.toISOString().slice(0, 10)
-                                : null,
+                            fetchLeadsData({
+                              from: buildDateParam(nextRange?.from),
                               page: 1,
-                              to: nextRange?.to
-                                ? nextRange.to.toISOString().slice(0, 10)
-                                : null,
+                              to: buildDateParam(nextRange?.to),
                             });
                           }}
                           brand={brand}
@@ -878,28 +967,31 @@ export function LeadsPageClient({
                           ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                           : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                       }
-                      onClick={() => {
+                          onClick={() => {
                         setSelectedCampaigns([]);
-                        replaceQuery({ campaigns: [], page: 1 });
+                        fetchLeadsData({ campaigns: [], page: 1 });
                       }}
                     >
                       All campaigns
                     </Button>
-                    {data.campaignOptions.map((campaign) => {
-                      const selected = selectedCampaigns.includes(campaign);
+                    {campaignChipGroups.map((group) => {
+                      const selected = group.campaigns.some((campaign) =>
+                        selectedCampaigns.includes(campaign),
+                      );
+                      const chipKey = group.campaigns.join("|");
 
                       return (
                         <Button
-                          key={campaign}
+                          key={chipKey}
                           variant="ghost"
                           className={
                             selected
                               ? "shrink-0 rounded-full border border-white/70 bg-white px-4 py-0.5 font-medium text-black shadow-[0_4px_12px_rgba(0,0,0,0.1)] backdrop-blur-xl hover:bg-white hover:text-black"
                               : "shrink-0 rounded-full border border-white/10 bg-white/6 px-4 py-0.5 text-white/74 shadow-none backdrop-blur-xl hover:bg-white/10 hover:text-white"
                           }
-                          onClick={() => toggleCampaign(campaign)}
+                          onClick={() => toggleCampaignGroup(group.campaigns)}
                         >
-                          {campaign}
+                          {group.label}
                         </Button>
                       );
                     })}

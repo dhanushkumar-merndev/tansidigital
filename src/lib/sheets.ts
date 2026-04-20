@@ -33,8 +33,7 @@ type LeadCountState = {
   signature: string;
 };
 
-type WorkbookSnapshot = {
-  version: 1;
+type WorkbookStoreState = {
   generatedAt: string;
   leadCountSignature: string;
   leadCountByTab: Record<string, number>;
@@ -111,6 +110,7 @@ export type LeadsPageQuery = {
 };
 
 export type LeadsPageData = {
+  campaignLabels: Record<string, string>;
   campaignOptions: string[];
   error?: string;
   page: number;
@@ -195,25 +195,8 @@ const DEFAULT_REDWING_LOCATION_LABELS = [
   "panathur",
 ];
 const LEADS_PAGE_SIZE = 100;
-const LEADS_INDEX_SCHEMA_VERSION = "2";
-const SNAPSHOT_SOURCE_PATH = path.join(process.cwd(), "data", "workbook-snapshot.json");
+const WORKBOOK_DB_SCHEMA_VERSION = "4";
 const IS_CLOUD_ENVIRONMENT = process.env.NODE_ENV === "production" || !!process.env.VERCEL || !!process.env.AWS_REGION;
-
-const SNAPSHOT_RUNTIME_PATH = (() => {
-  const configuredPath = process.env.WORKBOOK_SNAPSHOT_PATH?.trim();
-  if (configuredPath) {
-    return path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.join(process.cwd(), configuredPath);
-  }
-
-  if (IS_CLOUD_ENVIRONMENT) {
-    return path.join("/tmp", "workbook-snapshot.json");
-  }
-
-  return SNAPSHOT_SOURCE_PATH;
-})();
-const SNAPSHOT_READ_PATHS = Array.from(new Set([SNAPSHOT_RUNTIME_PATH, SNAPSHOT_SOURCE_PATH]));
 const LEADS_INDEX_SOURCE_PATH = path.join(process.cwd(), "data", "workbook-leads.sqlite");
 const LEADS_INDEX_RUNTIME_PATH = (() => {
   const configuredPath = process.env.WORKBOOK_LEADS_INDEX_PATH?.trim();
@@ -1394,10 +1377,20 @@ function recordToMap<T>(record: Record<string, T>) {
   return new Map(Object.entries(record));
 }
 
-function buildWorkbookSnapshot(
+function isMeaningfulLeadSourceRow(row: Record<string, string>) {
+  return Boolean(
+    getFirstValue(row, ["id"]).trim() ||
+      getFirstValue(row, ["created_time"]).trim() ||
+      getFirstValue(row, ["full_name", "name"]).trim() ||
+      getFirstValue(row, ["phone_number", "phone", "mobile_number"]).trim() ||
+      getFirstValue(row, ["email", "email_address"]).trim(),
+  );
+}
+
+function buildWorkbookStoreState(
   rawSheets: RawSheet[],
   dataSheetConfig: DataSheetConfig,
-): WorkbookSnapshot {
+): WorkbookStoreState {
   const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
   const rowsByTab: Record<string, DashboardRow[]> = {};
   const sheetTitleByTab: Record<string, string> = {};
@@ -1406,13 +1399,12 @@ function buildWorkbookSnapshot(
   usableSheets.forEach((sheet) => {
     const expandedTabName = expandAliases(sheet.title);
     rowsByTab[expandedTabName] = sheet.rows
-      .filter((row) => Object.values(row).some(Boolean))
+      .filter((row) => Object.values(row).some(Boolean) && isMeaningfulLeadSourceRow(row))
       .map((row, index) => normalizeRow(sheet.title, row, index, dataSheetConfig));
     sheetTitleByTab[expandedTabName] = sheet.title;
   });
 
   return {
-    version: 1,
     generatedAt: new Date().toISOString(),
     leadCountSignature: dataSheetConfig.leadCountSignature,
     leadCountByTab: mapToRecord(dataSheetConfig.leadCountByTab),
@@ -1429,77 +1421,20 @@ function buildWorkbookSnapshot(
   };
 }
 
-function buildWorkbookDataFromSnapshot(snapshot: WorkbookSnapshot): WorkbookData {
+function buildWorkbookDataFromState(state: WorkbookStoreState): WorkbookData {
   const spreadsheetId = process.env.SHEET_ID ?? "";
   const defaultTabName = process.env.TAB_NAME ?? "DATA";
-  const rows = snapshot.tabs.flatMap((tab) => snapshot.rowsByTab[tab] ?? []);
+  const rows = state.tabs.flatMap((tab) => state.rowsByTab[tab] ?? []);
 
   return {
     sheetId: spreadsheetId,
     defaultTabName,
-    tabs: snapshot.tabs,
-    tabLabels: snapshot.tabLabels || {},
+    tabs: state.tabs,
+    tabLabels: state.tabLabels || {},
     rows: rows,
-    digitalLeads: snapshot.digitalLeads,
-    leadTableColumns: snapshot.leadTableColumns,
+    digitalLeads: state.digitalLeads,
+    leadTableColumns: state.leadTableColumns,
   };
-}
-
-async function ensureSnapshotDirectory() {
-  await fs.mkdir(path.dirname(SNAPSHOT_RUNTIME_PATH), { recursive: true });
-}
-
-async function readWorkbookSnapshotFromPath(snapshotPath: string) {
-  try {
-    const contents = await fs.readFile(snapshotPath, "utf8");
-    const parsed = JSON.parse(contents) as WorkbookSnapshot;
-
-    if (parsed.version !== 1) {
-      return null;
-    }
-
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function readWorkbookSnapshot() {
-  for (const snapshotPath of SNAPSHOT_READ_PATHS) {
-    const snapshot = await readWorkbookSnapshotFromPath(snapshotPath);
-    if (snapshot) {
-      return snapshot;
-    }
-  }
-
-  return null;
-}
-
-async function writeWorkbookSnapshot(snapshot: WorkbookSnapshot) {
-  try {
-    await ensureSnapshotDirectory();
-    await fs.writeFile(SNAPSHOT_RUNTIME_PATH, JSON.stringify(snapshot), "utf8");
-  } catch (error) {
-    console.warn(
-      `Unable to write workbook snapshot at ${SNAPSHOT_RUNTIME_PATH}:`,
-      error,
-    );
-  }
-}
-
-async function getWorkbookSnapshotTimestamp() {
-  let latestTimestamp = 0;
-
-  for (const snapshotPath of SNAPSHOT_READ_PATHS) {
-    try {
-      const stats = await fs.stat(snapshotPath);
-      latestTimestamp = Math.max(latestTimestamp, stats.mtimeMs);
-    } catch {
-      // Ignore missing snapshot paths and keep checking fallbacks.
-    }
-  }
-
-  return latestTimestamp;
 }
 
 type LeadsIndexRow = {
@@ -1518,6 +1453,40 @@ type LeadsIndexRow = {
   phone_number: string;
   platform: string;
   tab_name: string;
+  raw_json: string;
+};
+
+type WorkbookMetaRow = {
+  key?: string;
+  value?: string;
+};
+
+type WorkbookTabRow = {
+  brand?: string;
+  position?: number;
+  sheet_title?: string;
+  tab_label?: string;
+  tab_name?: string;
+};
+
+type DigitalLeadRow = {
+  actual?: number;
+  contacted?: number;
+  date?: string;
+  interested?: number;
+  non_contacted?: number;
+};
+
+type WorkbookStoreMetadata = {
+  brandByTab: Map<string, ConcreteBrand>;
+  canonicalTabByLookup: Map<string, string>;
+  generatedAt: string;
+  leadCountByTab: Map<string, number>;
+  leadCountSignature: string;
+  leadTableColumns: LeadTableColumn[];
+  sheetTitleByTab: Record<string, string>;
+  tabLabels: Map<string, string>;
+  tabs: string[];
 };
 
 function buildLeadsSearchText(row: DashboardRow) {
@@ -1534,15 +1503,31 @@ function buildLeadsSearchText(row: DashboardRow) {
     .toLowerCase();
 }
 
-function createLeadsIndexSignature(rows: DashboardRow[]) {
-  return `fallback:${rows.length}:${rows.at(0)?.id ?? ""}:${rows.at(-1)?.id ?? ""}`;
+function parseStoredJson<T>(value: string | undefined, fallback: T): T {
+  if (!value) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
-async function ensureLeadsIndexDirectory() {
+function normalizeStoredBrand(value: string | undefined): ConcreteBrand | "unknown" {
+  if (value === "bigwing" || value === "redwing") {
+    return value;
+  }
+
+  return "unknown";
+}
+
+async function ensureWorkbookDatabaseDirectory() {
   await fs.mkdir(path.dirname(LEADS_INDEX_RUNTIME_PATH), { recursive: true });
 }
 
-async function openLeadsIndexDatabase() {
+async function openWorkbookDatabase() {
   const { DatabaseSync } = await import(
     /* webpackIgnore: true */
     /* turbopackIgnore: true */
@@ -1553,9 +1538,35 @@ async function openLeadsIndexDatabase() {
   database.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
+    CREATE TABLE IF NOT EXISTS workbook_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const currentSchemaVersion = (
+    database
+      .prepare("SELECT value FROM workbook_meta WHERE key = ?")
+      .get("schemaVersion") as { value?: string } | undefined
+  )?.value;
+
+  if (currentSchemaVersion !== WORKBOOK_DB_SCHEMA_VERSION) {
+    database.exec(`
+      DROP TABLE IF EXISTS leads_search;
+      DROP TABLE IF EXISTS leads;
+      DROP TABLE IF EXISTS workbook_tabs;
+      DROP TABLE IF EXISTS digital_leads;
+      DELETE FROM workbook_meta;
+    `);
+  }
+
+  database.exec(`
     CREATE TABLE IF NOT EXISTS leads (
       id TEXT PRIMARY KEY,
       tab_name TEXT NOT NULL,
+      sheet_title TEXT NOT NULL,
+      tab_order INTEGER NOT NULL,
+      tab_row_index INTEGER NOT NULL,
       date TEXT NOT NULL,
       brand TEXT NOT NULL,
       campaign TEXT NOT NULL,
@@ -1569,59 +1580,141 @@ async function openLeadsIndexDatabase() {
       lead_status TEXT NOT NULL,
       is_organic INTEGER NOT NULL,
       lead_count INTEGER NOT NULL,
-      search_text TEXT NOT NULL
+      search_text TEXT NOT NULL,
+      raw_json TEXT NOT NULL
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS leads_search USING fts5(
       id UNINDEXED,
       search_text,
       tokenize = 'unicode61 remove_diacritics 2'
     );
-    CREATE TABLE IF NOT EXISTS leads_index_meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
+    CREATE TABLE IF NOT EXISTS workbook_tabs (
+      position INTEGER PRIMARY KEY,
+      tab_name TEXT NOT NULL UNIQUE,
+      sheet_title TEXT NOT NULL,
+      tab_label TEXT NOT NULL,
+      brand TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS digital_leads (
+      id INTEGER PRIMARY KEY,
+      date TEXT NOT NULL,
+      actual INTEGER NOT NULL,
+      contacted INTEGER NOT NULL,
+      non_contacted INTEGER NOT NULL,
+      interested INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_leads_brand_campaign ON leads (brand, campaign);
     CREATE INDEX IF NOT EXISTS idx_leads_brand_date_id ON leads (brand, date, id);
+    CREATE INDEX IF NOT EXISTS idx_leads_tab_order_row ON leads (tab_order, tab_row_index);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_tab_name_row_index ON leads (tab_name, tab_row_index);
+    CREATE INDEX IF NOT EXISTS idx_digital_leads_date_id ON digital_leads (date, id);
   `);
+
+  database
+    .prepare(`
+      INSERT INTO workbook_meta (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `)
+    .run("schemaVersion", WORKBOOK_DB_SCHEMA_VERSION);
 
   return database;
 }
 
-async function getLeadsIndexSource() {
-  const snapshot = await readWorkbookSnapshot();
+function writeWorkbookMeta(database: DatabaseSync, entries: Record<string, string>) {
+  const upsertMeta = database.prepare(`
+    INSERT INTO workbook_meta (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `);
 
-  if (snapshot) {
-    return {
-      error: undefined,
-      rows: snapshot.tabs.flatMap((tab) => snapshot.rowsByTab[tab] ?? []),
-      signature: `${snapshot.generatedAt}:${snapshot.leadCountSignature}`,
-    };
+  Object.entries(entries).forEach(([key, value]) => {
+    upsertMeta.run(key, value);
+  });
+}
+
+function readWorkbookStoreMetadata(database: DatabaseSync): WorkbookStoreMetadata | null {
+  const metaRows = database
+    .prepare("SELECT key, value FROM workbook_meta")
+    .all() as WorkbookMetaRow[];
+  const meta = new Map(metaRows.map((row) => [row.key ?? "", row.value ?? ""]));
+  const tabRows = database
+    .prepare(`
+      SELECT position, tab_name, sheet_title, tab_label, brand
+      FROM workbook_tabs
+      ORDER BY position ASC
+    `)
+    .all() as WorkbookTabRow[];
+  const generatedAt = meta.get("generatedAt") ?? "";
+
+  if (!generatedAt && tabRows.length === 0) {
+    return null;
   }
 
-  const workbook = await getWorkbookData();
+  const leadCountByTab = recordToMap(
+    parseStoredJson<Record<string, number>>(meta.get("leadCountByTab"), {}),
+  );
+  const canonicalTabByLookup = recordToMap(
+    parseStoredJson<Record<string, string>>(meta.get("canonicalTabByLookup"), {}),
+  );
+  const leadTableColumns = parseStoredJson<LeadTableColumn[]>(
+    meta.get("leadTableColumns"),
+    [],
+  );
+  const brandByTabRecord = parseStoredJson<Record<string, string>>(meta.get("brandByTab"), {});
+  const brandByTab = new Map<string, ConcreteBrand>();
+
+  Object.entries(brandByTabRecord).forEach(([key, value]) => {
+    if (value === "bigwing" || value === "redwing") {
+      brandByTab.set(key, value);
+    }
+  });
 
   return {
-    error: workbook.error,
-    rows: workbook.rows,
-    signature: createLeadsIndexSignature(workbook.rows),
+    brandByTab,
+    canonicalTabByLookup,
+    generatedAt,
+    leadCountByTab,
+    leadCountSignature: meta.get("leadCountSignature") ?? "",
+    leadTableColumns,
+    sheetTitleByTab: Object.fromEntries(
+      tabRows.map((row) => [row.tab_name ?? "", row.sheet_title ?? row.tab_name ?? ""]),
+    ),
+    tabLabels: new Map(tabRows.map((row) => [row.tab_name ?? "", row.tab_label ?? ""])),
+    tabs: tabRows.map((row) => row.tab_name ?? "").filter(Boolean),
   };
 }
 
-function rebuildLeadsIndex(database: DatabaseSync, rows: DashboardRow[], signature: string) {
+function rebuildWorkbookStore(database: DatabaseSync, state: WorkbookStoreState) {
   const clearLeads = database.prepare("DELETE FROM leads");
   const clearSearch = database.prepare("DELETE FROM leads_search");
-  const clearMeta = database.prepare("DELETE FROM leads_index_meta");
+  const clearTabs = database.prepare("DELETE FROM workbook_tabs");
+  const clearDigitalLeads = database.prepare("DELETE FROM digital_leads");
+  const clearMeta = database.prepare("DELETE FROM workbook_meta");
   const insertLead = database.prepare(`
     INSERT INTO leads (
-      id, tab_name, date, brand, campaign, ad_name, form_name, platform, location,
-      full_name, phone_number, email, lead_status, is_organic, lead_count, search_text
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, tab_name, sheet_title, tab_order, tab_row_index, date, brand, campaign, ad_name,
+      form_name, platform, location, full_name, phone_number, email, lead_status,
+      is_organic, lead_count, search_text, raw_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertSearch = database.prepare(`
     INSERT INTO leads_search (id, search_text) VALUES (?, ?)
   `);
+  const insertTab = database.prepare(`
+    INSERT INTO workbook_tabs (position, tab_name, sheet_title, tab_label, brand)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const insertDigitalLead = database.prepare(`
+    INSERT INTO digital_leads (date, actual, contacted, non_contacted, interested)
+    VALUES (?, ?, ?, ?, ?)
+  `);
   const insertMeta = database.prepare(
-    "INSERT INTO leads_index_meta (key, value) VALUES (?, ?)",
+    `
+      INSERT INTO workbook_meta (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `,
   );
 
   database.exec("BEGIN");
@@ -1629,68 +1722,69 @@ function rebuildLeadsIndex(database: DatabaseSync, rows: DashboardRow[], signatu
   try {
     clearLeads.run();
     clearSearch.run();
+    clearTabs.run();
+    clearDigitalLeads.run();
     clearMeta.run();
 
-    for (const row of rows) {
-      const searchText = buildLeadsSearchText(row);
+    state.tabs.forEach((tabName, tabOrder) => {
+      const sheetTitle = state.sheetTitleByTab[tabName] ?? tabName;
+      const tabBrand = normalizeStoredBrand(state.brandByTab[normalizeLookupKey(tabName)]);
+      const tabLabel = state.tabLabels[tabName] ?? "";
+      const rows = state.rowsByTab[tabName] ?? [];
 
-      insertLead.run(
-        row.id,
-        row.tabName,
-        row.date ?? "",
-        row.brand,
-        row.campaign,
-        row.adName,
-        row.formName,
-        row.platform,
-        row.location,
-        row.fullName,
-        row.phoneNumber,
-        row.email,
-        row.leadStatus,
-        row.isOrganic ? 1 : 0,
-        row.leadCount,
-        searchText,
+      insertTab.run(tabOrder, tabName, sheetTitle, tabLabel, tabBrand);
+
+      rows.forEach((row, rowIndex) => {
+        const searchText = buildLeadsSearchText(row);
+
+        insertLead.run(
+          row.id,
+          row.tabName,
+          sheetTitle,
+          tabOrder,
+          rowIndex,
+          row.date ?? "",
+          row.brand,
+          row.campaign,
+          row.adName,
+          row.formName,
+          row.platform,
+          row.location,
+          row.fullName,
+          row.phoneNumber,
+          row.email,
+          row.leadStatus,
+          row.isOrganic ? 1 : 0,
+          row.leadCount,
+          searchText,
+          JSON.stringify(row.raw),
+        );
+        insertSearch.run(row.id, searchText);
+      });
+    });
+
+    state.digitalLeads.forEach((entry) => {
+      insertDigitalLead.run(
+        entry.date,
+        entry.actual,
+        entry.contacted,
+        entry.nonContacted,
+        entry.interested,
       );
-      insertSearch.run(row.id, searchText);
-    }
+    });
 
-    insertMeta.run("schemaVersion", LEADS_INDEX_SCHEMA_VERSION);
-    insertMeta.run("signature", signature);
-    insertMeta.run("rowCount", String(rows.length));
-    insertMeta.run("updatedAt", new Date().toISOString());
+    insertMeta.run("schemaVersion", WORKBOOK_DB_SCHEMA_VERSION);
+    insertMeta.run("generatedAt", state.generatedAt);
+    insertMeta.run("leadCountSignature", state.leadCountSignature);
+    insertMeta.run("leadCountByTab", JSON.stringify(state.leadCountByTab));
+    insertMeta.run("brandByTab", JSON.stringify(state.brandByTab));
+    insertMeta.run("canonicalTabByLookup", JSON.stringify(state.canonicalTabByLookup));
+    insertMeta.run("leadTableColumns", JSON.stringify(state.leadTableColumns));
 
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;
-  }
-}
-
-async function ensureLeadsIndexReady() {
-  await ensureLeadsIndexDirectory();
-
-  const { error, rows, signature } = await getLeadsIndexSource();
-  const database = await openLeadsIndexDatabase();
-
-  try {
-    const currentMetaRows = database
-      .prepare("SELECT key, value FROM leads_index_meta")
-      .all() as Array<{ key?: string; value?: string }>;
-    const currentMeta = new Map(
-      currentMetaRows.map((row) => [row.key ?? "", row.value ?? ""]),
-    );
-    const currentSignature = currentMeta.get("signature");
-    const currentSchemaVersion = currentMeta.get("schemaVersion");
-
-    if (currentSignature !== signature || currentSchemaVersion !== LEADS_INDEX_SCHEMA_VERSION) {
-      rebuildLeadsIndex(database, rows, signature);
-    }
-
-    return { database, error };
-  } catch (indexError) {
-    database.close();
-    throw indexError;
   }
 }
 
@@ -1760,7 +1854,7 @@ function buildLeadsWhereClause(query: LeadsPageQuery) {
 function mapLeadsIndexRow(row: LeadsIndexRow): LeadsTableRow {
   return {
     adName: row.ad_name,
-    brand: row.brand === "redwing" ? "redwing" : row.brand === "bigwing" ? "bigwing" : "unknown",
+    brand: normalizeStoredBrand(row.brand),
     campaign: row.campaign,
     date: row.date || null,
     email: row.email,
@@ -1773,22 +1867,101 @@ function mapLeadsIndexRow(row: LeadsIndexRow): LeadsTableRow {
     location: row.location,
     phoneNumber: row.phone_number,
     platform: row.platform,
-    raw: {},
+    raw: parseStoredJson<Record<string, string>>(row.raw_json, {}),
     tabName: row.tab_name,
   };
 }
 
-async function appendDigitalLeadsToSnapshot(entries: DigitalLeadImportEntry[]) {
-  const snapshot = await readWorkbookSnapshot();
-  if (!snapshot) return;
+function buildWorkbookDataFromDatabase(database: DatabaseSync): WorkbookData {
+  const spreadsheetId = process.env.SHEET_ID ?? "";
+  const defaultTabName = process.env.TAB_NAME ?? "DATA";
+  const tabRows = database
+    .prepare(`
+      SELECT position, tab_name, tab_label
+      FROM workbook_tabs
+      ORDER BY position ASC
+    `)
+    .all() as WorkbookTabRow[];
+  const rows = database
+    .prepare(`
+      SELECT
+        id, tab_name, date, brand, campaign, ad_name, form_name, platform,
+        location, full_name, phone_number, email, lead_status, is_organic,
+        lead_count, raw_json
+      FROM leads
+      ORDER BY tab_order ASC, tab_row_index ASC
+    `)
+    .all() as LeadsIndexRow[];
+  const digitalLeads = database
+    .prepare(`
+      SELECT date, actual, contacted, non_contacted, interested
+      FROM digital_leads
+      ORDER BY date ASC, id ASC
+    `)
+    .all() as DigitalLeadRow[];
+  const metadata = readWorkbookStoreMetadata(database);
 
-  const nextSnapshot: WorkbookSnapshot = {
-    ...snapshot,
-    generatedAt: new Date().toISOString(),
-    digitalLeads: [...snapshot.digitalLeads, ...entries].sort((a, b) => a.date.localeCompare(b.date)),
+  return {
+    sheetId: spreadsheetId,
+    defaultTabName,
+    tabs: tabRows.map((row) => row.tab_name ?? "").filter(Boolean),
+    tabLabels: Object.fromEntries(
+      tabRows
+        .map((row) => [row.tab_name ?? "", row.tab_label ?? ""] as const)
+        .filter(([tabName]) => Boolean(tabName)),
+    ),
+    rows: rows.map((row) => mapLeadsIndexRow(row)),
+    digitalLeads: digitalLeads.map((entry) => ({
+      actual: Number(entry.actual ?? 0),
+      contacted: Number(entry.contacted ?? 0),
+      date: entry.date ?? "",
+      interested: Number(entry.interested ?? 0),
+      nonContacted: Number(entry.non_contacted ?? 0),
+    })),
+    leadTableColumns: metadata?.leadTableColumns ?? [],
   };
+}
 
-  await writeWorkbookSnapshot(nextSnapshot);
+async function appendDigitalLeadsToStore(entries: DigitalLeadImportEntry[]) {
+  await ensureWorkbookDatabaseDirectory();
+  const database = await openWorkbookDatabase();
+
+  try {
+    const metadata = readWorkbookStoreMetadata(database);
+    if (!metadata) {
+      return;
+    }
+
+    const insertDigitalLead = database.prepare(`
+      INSERT INTO digital_leads (date, actual, contacted, non_contacted, interested)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    database.exec("BEGIN");
+
+    try {
+      entries.forEach((entry) => {
+        insertDigitalLead.run(
+          entry.date,
+          entry.actual,
+          entry.contacted,
+          entry.nonContacted,
+          entry.interested,
+        );
+      });
+
+      writeWorkbookMeta(database, {
+        generatedAt: new Date().toISOString(),
+      });
+
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    database.close();
+  }
 }
 
 function normalizeRow(
@@ -2116,17 +2289,26 @@ async function getFreshLeadCountState(force = false): Promise<LeadCountState> {
   return _countCheckPromise;
 }
 
-async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
-  try {
-    const rawSheets = await fetchRawSheets();
-    const dataSheetConfig = extractDataSheetConfig(rawSheets);
-    const snapshot = buildWorkbookSnapshot(rawSheets, dataSheetConfig);
-    _cachedCountSignature = dataSheetConfig.leadCountSignature;
-    _cachedCountByTab = new Map(dataSheetConfig.leadCountByTab);
-    _countCheckTimestamp = Date.now();
-    await writeWorkbookSnapshot(snapshot);
+async function refreshWorkbookStoreFromSheets(database: DatabaseSync): Promise<WorkbookData> {
+  const rawSheets = await fetchRawSheets();
+  const dataSheetConfig = extractDataSheetConfig(rawSheets);
+  const state = buildWorkbookStoreState(rawSheets, dataSheetConfig);
 
-    return buildWorkbookDataFromSnapshot(snapshot);
+  _cachedCountSignature = dataSheetConfig.leadCountSignature;
+  _cachedCountByTab = new Map(dataSheetConfig.leadCountByTab);
+  _countCheckTimestamp = Date.now();
+
+  rebuildWorkbookStore(database, state);
+
+  return buildWorkbookDataFromState(state);
+}
+
+async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
+  await ensureWorkbookDatabaseDirectory();
+  const database = await openWorkbookDatabase();
+
+  try {
+    return await refreshWorkbookStoreFromSheets(database);
   } catch (error) {
     const spreadsheetId = process.env.SHEET_ID ?? "";
     const defaultTabName = process.env.TAB_NAME ?? "DATA";
@@ -2143,6 +2325,8 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
       leadTableColumns: [],
       error: message,
     };
+  } finally {
+    database.close();
   }
 }
 
@@ -2181,16 +2365,17 @@ async function fetchDashboardDataInternal(): Promise<DashboardData> {
   }
 }
 
-async function refreshSnapshotByAppend(
-  snapshot: WorkbookSnapshot,
+async function appendWorkbookStoreByAppend(
+  database: DatabaseSync,
+  metadata: WorkbookStoreMetadata,
   leadCountState: LeadCountState,
-): Promise<WorkbookSnapshot | null> {
+): Promise<WorkbookData | null> {
   const changedTabs: string[] = [];
-  const previousCountByTab = recordToMap(snapshot.leadCountByTab);
+  const nextLeadCountByTab = new Map(metadata.leadCountByTab);
 
   for (const [tabName, nextCount] of leadCountState.countByTab.entries()) {
-    const previousCount = previousCountByTab.get(tabName) ?? snapshot.rowsByTab[tabName]?.length;
-    const sheetTitle = snapshot.sheetTitleByTab[tabName];
+    const previousCount = metadata.leadCountByTab.get(tabName);
+    const sheetTitle = metadata.sheetTitleByTab[tabName];
 
     if (previousCount === undefined || !sheetTitle) {
       return null;
@@ -2205,66 +2390,120 @@ async function refreshSnapshotByAppend(
     }
   }
 
-  for (const tabName of Object.keys(snapshot.rowsByTab)) {
+  for (const tabName of metadata.tabs) {
     if (!leadCountState.countByTab.has(tabName)) {
       return null;
     }
   }
 
   if (changedTabs.length === 0) {
-    return {
-      ...snapshot,
+    writeWorkbookMeta(database, {
       generatedAt: new Date().toISOString(),
+      leadCountByTab: JSON.stringify(mapToRecord(leadCountState.countByTab)),
       leadCountSignature: leadCountState.signature,
-      leadCountByTab: mapToRecord(leadCountState.countByTab),
-    };
+    });
+
+    return buildWorkbookDataFromDatabase(database);
   }
 
   const dataSheetConfig: DataSheetConfig = {
-    brandByTab: recordToMap(snapshot.brandByTab),
+    brandByTab: new Map(metadata.brandByTab),
     campaignAliasesByTab: new Map(),
-    canonicalTabByLookup: recordToMap(snapshot.canonicalTabByLookup),
-    tabLabels: recordToMap(snapshot.tabLabels),
-    leadTableColumns: snapshot.leadTableColumns,
+    canonicalTabByLookup: new Map(metadata.canonicalTabByLookup),
+    tabLabels: new Map(metadata.tabLabels),
+    leadTableColumns: metadata.leadTableColumns,
     leadCountByTab: leadCountState.countByTab,
     leadCountSignature: leadCountState.signature,
     redwingLocationLabels: DEFAULT_REDWING_LOCATION_LABELS,
-    tabs: snapshot.tabs,
+    tabs: metadata.tabs,
   };
   const incrementalSheets = await fetchIncrementalRawSheets(
     changedTabs.map((tabName) => ({
-      title: snapshot.sheetTitleByTab[tabName],
-      startRow: (snapshot.rowsByTab[tabName]?.length ?? 0) + 2,
+      title: metadata.sheetTitleByTab[tabName],
+      startRow: (metadata.leadCountByTab.get(tabName) ?? 0) + 2,
     })),
   );
-  const nextRowsByTab = { ...snapshot.rowsByTab };
+  const insertLead = database.prepare(`
+    INSERT INTO leads (
+      id, tab_name, sheet_title, tab_order, tab_row_index, date, brand, campaign, ad_name,
+      form_name, platform, location, full_name, phone_number, email, lead_status,
+      is_organic, lead_count, search_text, raw_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertSearch = database.prepare(`
+    INSERT INTO leads_search (id, search_text) VALUES (?, ?)
+  `);
+  const tabOrderByName = new Map(metadata.tabs.map((tabName, index) => [tabName, index]));
 
-  incrementalSheets.forEach((sheet) => {
-    const expandedTabName = expandAliases(sheet.title);
-    const existingRows = nextRowsByTab[expandedTabName] ?? [];
-    const appendedRows = sheet.rows
-      .filter((row) => Object.values(row).some(Boolean))
-      .map((row, index) => normalizeRow(sheet.title, row, existingRows.length + index, dataSheetConfig));
+  database.exec("BEGIN");
 
-    nextRowsByTab[expandedTabName] = [...existingRows, ...appendedRows];
-  });
+  try {
+    incrementalSheets.forEach((sheet) => {
+      const expandedTabName = expandAliases(sheet.title);
+      const existingCount = metadata.leadCountByTab.get(expandedTabName) ?? 0;
+      const tabOrder = tabOrderByName.get(expandedTabName);
 
-  for (const tabName of changedTabs) {
-    const expectedCount = leadCountState.countByTab.get(tabName);
-    const actualCount = nextRowsByTab[tabName]?.length ?? 0;
+      if (tabOrder === undefined) {
+        throw new Error(`Missing workbook tab order for ${expandedTabName}.`);
+      }
 
-    if (expectedCount === undefined || actualCount !== expectedCount) {
-      return null;
+      const appendedRows = sheet.rows
+        .filter((row) => Object.values(row).some(Boolean) && isMeaningfulLeadSourceRow(row))
+        .map((row, index) => normalizeRow(sheet.title, row, existingCount + index, dataSheetConfig));
+
+      appendedRows.forEach((row, rowIndex) => {
+        const searchText = buildLeadsSearchText(row);
+
+        insertLead.run(
+          row.id,
+          row.tabName,
+          sheet.title,
+          tabOrder,
+          existingCount + rowIndex,
+          row.date ?? "",
+          row.brand,
+          row.campaign,
+          row.adName,
+          row.formName,
+          row.platform,
+          row.location,
+          row.fullName,
+          row.phoneNumber,
+          row.email,
+          row.leadStatus,
+          row.isOrganic ? 1 : 0,
+          row.leadCount,
+          searchText,
+          JSON.stringify(row.raw),
+        );
+        insertSearch.run(row.id, searchText);
+      });
+
+      nextLeadCountByTab.set(expandedTabName, existingCount + appendedRows.length);
+    });
+
+    for (const tabName of changedTabs) {
+      const expectedCount = leadCountState.countByTab.get(tabName);
+      const actualCount = nextLeadCountByTab.get(tabName) ?? 0;
+
+      if (expectedCount === undefined || actualCount !== expectedCount) {
+        throw new Error(`Workbook append count mismatch for ${tabName}.`);
+      }
     }
+
+    writeWorkbookMeta(database, {
+      generatedAt: new Date().toISOString(),
+      leadCountByTab: JSON.stringify(mapToRecord(nextLeadCountByTab)),
+      leadCountSignature: leadCountState.signature,
+    });
+
+    database.exec("COMMIT");
+  } catch {
+    database.exec("ROLLBACK");
+    return null;
   }
 
-  return {
-    ...snapshot,
-    generatedAt: new Date().toISOString(),
-    leadCountSignature: leadCountState.signature,
-    leadCountByTab: mapToRecord(leadCountState.countByTab),
-    rowsByTab: nextRowsByTab,
-  };
+  return buildWorkbookDataFromDatabase(database);
 }
 
 function clearWorkbookCacheState() {
@@ -2283,6 +2522,55 @@ function clearDashboardCacheState() {
   _dashboardInflightPromise = null;
 }
 
+async function ensureWorkbookStoreReady(options?: { verifyFreshness?: boolean }) {
+  const verifyFreshness = options?.verifyFreshness ?? true;
+  await ensureWorkbookDatabaseDirectory();
+  const database = await openWorkbookDatabase();
+
+  try {
+    const metadata = readWorkbookStoreMetadata(database);
+
+    if (!metadata) {
+      const data = await refreshWorkbookStoreFromSheets(database);
+      return { data, database };
+    }
+
+    if (!verifyFreshness) {
+      return { data: buildWorkbookDataFromDatabase(database), database };
+    }
+
+    try {
+      const latestLeadCountState = await getFreshLeadCountState();
+
+      if (metadata.leadCountSignature === latestLeadCountState.signature) {
+        return { data: buildWorkbookDataFromDatabase(database), database };
+      }
+
+      const appendedData = await appendWorkbookStoreByAppend(
+        database,
+        metadata,
+        latestLeadCountState,
+      );
+
+      if (appendedData) {
+        _cachedCountSignature = latestLeadCountState.signature;
+        _cachedCountByTab = new Map(latestLeadCountState.countByTab);
+        _countCheckTimestamp = Date.now();
+
+        return { data: appendedData, database };
+      }
+
+      const data = await refreshWorkbookStoreFromSheets(database);
+      return { data, database };
+    } catch {
+      return { data: buildWorkbookDataFromDatabase(database), database };
+    }
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
 export async function refreshWorkbookData(): Promise<WorkbookData> {
   clearWorkbookCacheState();
   clearDashboardCacheState();
@@ -2298,71 +2586,34 @@ export async function getWorkbookData(): Promise<WorkbookData> {
   const now = Date.now();
   const cachedData = _cachedData;
 
-  // Return cached data if still fresh
   if (cachedData && now - _cacheTimestamp < CACHE_TTL_MS) {
-    const snapshotTimestamp = await getWorkbookSnapshotTimestamp();
-
-    if (snapshotTimestamp > _cacheTimestamp) {
-      _cachedData = null;
-      _cacheTimestamp = 0;
-    } else {
-      try {
-        const latestLeadCountState = await getFreshLeadCountState();
-        if (latestLeadCountState.signature === _cachedCountSignature) {
-          return cachedData;
-        }
-
-        _cachedData = null;
-        _cacheTimestamp = 0;
-      } catch {
+    try {
+      const latestLeadCountState = await getFreshLeadCountState();
+      if (latestLeadCountState.signature === _cachedCountSignature) {
         return cachedData;
       }
+
+      _cachedData = null;
+      _cacheTimestamp = 0;
+    } catch {
+      return cachedData;
     }
   }
 
-  // If another request is already fetching, wait for it (dedup concurrent calls)
   if (_inflightPromise) {
     return _inflightPromise;
   }
 
   _inflightPromise = (async () => {
-    const snapshot = await readWorkbookSnapshot();
+    const { data, database } = await ensureWorkbookStoreReady();
 
-    if (snapshot) {
-      try {
-        const latestLeadCountState = await getFreshLeadCountState();
-
-        if (snapshot.leadCountSignature === latestLeadCountState.signature) {
-          const data = buildWorkbookDataFromSnapshot(snapshot);
-          _cachedData = data;
-          _cacheTimestamp = Date.now();
-          return data;
-        }
-
-        const nextSnapshot = await refreshSnapshotByAppend(snapshot, latestLeadCountState);
-        if (nextSnapshot) {
-          await writeWorkbookSnapshot(nextSnapshot);
-          _cachedCountSignature = nextSnapshot.leadCountSignature;
-          _cachedCountByTab = recordToMap(nextSnapshot.leadCountByTab);
-          _countCheckTimestamp = Date.now();
-
-          const data = buildWorkbookDataFromSnapshot(nextSnapshot);
-          _cachedData = data;
-          _cacheTimestamp = Date.now();
-          return data;
-        }
-      } catch {
-        const data = buildWorkbookDataFromSnapshot(snapshot);
-        _cachedData = data;
-        _cacheTimestamp = Date.now();
-        return data;
-      }
+    try {
+      _cachedData = data;
+      _cacheTimestamp = Date.now();
+      return data;
+    } finally {
+      database.close();
     }
-
-    const data = await fetchWorkbookDataInternal();
-    _cachedData = data;
-    _cacheTimestamp = Date.now();
-    return data;
   })()
     .finally(() => {
       _inflightPromise = null;
@@ -2411,17 +2662,34 @@ export async function getLeadsPageData(
   const normalizedQuery = normalizeLeadsQuery(query);
 
   try {
-    const { database, error } = await ensureLeadsIndexReady();
+    const { database } = await ensureWorkbookStoreReady({ verifyFreshness: false });
 
     try {
       const campaignRows = database
         .prepare(
-          "SELECT DISTINCT campaign FROM leads WHERE brand = ? AND campaign != '' ORDER BY campaign COLLATE NOCASE ASC",
+          `
+            SELECT DISTINCT
+              leads.campaign,
+              COALESCE(NULLIF(workbook_tabs.tab_label, ''), leads.campaign) AS campaign_label
+            FROM leads
+            LEFT JOIN workbook_tabs ON workbook_tabs.tab_name = leads.tab_name
+            WHERE leads.brand = ? AND leads.campaign != ''
+            ORDER BY campaign_label COLLATE NOCASE ASC
+          `,
         )
-        .all(normalizedQuery.brand) as Array<{ campaign?: string }>;
-      const campaignOptions = campaignRows
-        .map((row) => row.campaign?.trim() ?? "")
-        .filter(Boolean);
+        .all(normalizedQuery.brand) as Array<{ campaign?: string; campaign_label?: string }>;
+      const campaignLabels = new Map<string, string>();
+
+      campaignRows.forEach((row) => {
+        const campaign = row.campaign?.trim() ?? "";
+        const label = row.campaign_label?.trim() ?? campaign;
+
+        if (campaign && !campaignLabels.has(campaign)) {
+          campaignLabels.set(campaign, label || campaign);
+        }
+      });
+
+      const campaignOptions = Array.from(campaignLabels.keys());
       const validCampaigns = normalizedQuery.campaigns.filter((campaign) =>
         campaignOptions.includes(campaign),
       );
@@ -2444,7 +2712,7 @@ export async function getLeadsPageData(
             leads.id, leads.tab_name, leads.date, leads.brand, leads.campaign,
             leads.ad_name, leads.form_name, leads.platform, leads.location,
             leads.full_name, leads.phone_number, leads.email,
-            leads.lead_status, leads.is_organic, leads.lead_count
+            leads.lead_status, leads.is_organic, leads.lead_count, leads.raw_json
           ${queryParts.fromSql}
           ${queryParts.whereSql}
           ORDER BY leads.date ${orderBy}, leads.id ${orderBy}
@@ -2457,8 +2725,9 @@ export async function getLeadsPageData(
         ) as LeadsIndexRow[];
 
       return {
+        campaignLabels: Object.fromEntries(campaignLabels.entries()),
         campaignOptions,
-        error,
+        error: undefined,
         page,
         pageSize: LEADS_PAGE_SIZE,
         rows: rows.map((row) => mapLeadsIndexRow(row)),
@@ -2475,6 +2744,7 @@ export async function getLeadsPageData(
         : "Unable to query the leads index right now.";
 
     return {
+      campaignLabels: {},
       campaignOptions: [],
       error: message,
       page: 1,
@@ -2673,7 +2943,7 @@ export async function appendDigitalLeadImport(
     },
   });
 
-  await appendDigitalLeadsToSnapshot(entries);
+  await appendDigitalLeadsToStore(entries);
   _cachedData = null;
   _cacheTimestamp = 0;
   clearDashboardCacheState();

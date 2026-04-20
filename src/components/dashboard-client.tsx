@@ -72,6 +72,7 @@ type MetaSpendSummary = {
 type DashboardCard = {
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
+  isRefreshing?: boolean;
   label: string;
   value: string;
 };
@@ -200,6 +201,38 @@ function DisabledAdNameSearchInput({ id }: { id: string }) {
     </Field>
   );
 }
+
+const DashboardStatCard = React.memo(function DashboardStatCard({
+  card,
+}: {
+  card: DashboardCard;
+}) {
+  return (
+    <div className="crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4">
+      <div className="mb-2 flex items-center justify-between sm:mb-4">
+        <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
+          {card.label}
+        </span>
+        <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-white/10 sm:h-10 sm:w-10 sm:rounded-2xl">
+          <card.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
+          {card.value}
+        </div>
+        <div
+          className={`h-2 w-2 rounded-full bg-white/60 transition-opacity duration-150 ${
+            card.isRefreshing ? "animate-pulse opacity-100" : "opacity-0"
+          }`}
+        />
+      </div>
+      <p className="mt-1 text-[10px] leading-none text-white/54 sm:mt-2 sm:text-sm sm:leading-normal">
+        {card.hint}
+      </p>
+    </div>
+  );
+});
 
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -834,9 +867,6 @@ export function DashboardClient({
       }
 
       try {
-        if (!cachedEntry) {
-          setMetaSpend(null);
-        }
         setMetaSpendError(null);
         setIsMetaSpendLoading(true);
 
@@ -916,7 +946,6 @@ export function DashboardClient({
           return;
         }
 
-        setMetaSpend(null);
         setMetaSpendError(nextError);
       } finally {
         if (!controller.signal.aborted && !isDisposed) {
@@ -945,7 +974,7 @@ export function DashboardClient({
   );
 
   const metaCostValue = React.useMemo(() => {
-    if (isMetaSpendLoading) return "...";
+    if (isMetaSpendLoading && !metaSpend) return "...";
     if (!metaSpend?.configured) return "--";
 
     return formatCurrencyAmount(metaSpend.totalSpend, metaSpend.currency);
@@ -953,14 +982,14 @@ export function DashboardClient({
 
   const metaCpcAverage = matchedCampaigns.length > 0 ? metaCpcTotal / matchedCampaigns.length : 0;
   const metaCpcValue = React.useMemo(() => {
-    if (isMetaSpendLoading) return "...";
+    if (isMetaSpendLoading && !metaSpend) return "...";
     if (!metaSpend?.configured || matchedCampaigns.length === 0) return "--";
 
     return formatCurrencyAmount(metaCpcAverage, metaSpend.currency);
   }, [isMetaSpendLoading, matchedCampaigns.length, metaCpcAverage, metaSpend]);
 
   const metaCostHint = React.useMemo(() => {
-    if (isMetaSpendLoading) {
+    if (isMetaSpendLoading && !metaSpend) {
       return "Fetching live Meta cost for the selected filters.";
     }
 
@@ -969,7 +998,7 @@ export function DashboardClient({
     }
 
     if (!metaSpend?.configured) {
-      return "Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to enable Meta cost.";
+      return "Add API";
     }
 
     const matchedCampaignSet = new Set((metaSpend.campaigns ?? []).map((c) => c.name));
@@ -985,10 +1014,10 @@ export function DashboardClient({
     }
 
     return hint;
-  }, [isMetaSpendLoading, metaSpend, metaSpendError, selectedTabs]);
+  }, [isMetaSpendLoading, metaSpend, metaSpendError, selectedTabs, workbook.tabLabels]);
 
   const metaCpcHint = React.useMemo(() => {
-    if (isMetaSpendLoading) {
+    if (isMetaSpendLoading && !metaSpend) {
       return "Fetching live Meta CPC for the selected filters.";
     }
 
@@ -1038,12 +1067,14 @@ export function DashboardClient({
       {
         hint: metaCostHint,
         icon: IndianRupee,
+        isRefreshing: isMetaSpendLoading && Boolean(metaSpend),
         label: "Cost Spent",
         value: metaCostValue,
       },
       {
         hint: metaCpcHint,
         icon: Sparkles,
+        isRefreshing: isMetaSpendLoading && Boolean(metaSpend),
         label: "Meta CPC",
         value: metaCpcValue,
       },
@@ -1057,8 +1088,10 @@ export function DashboardClient({
     metaCostValue,
     metaCpcHint,
     metaCpcValue,
+    isMetaSpendLoading,
     selectedTabs.length,
     totalLeads,
+    metaSpend,
   ]);
 
   const filteredDigitalLeads = React.useMemo(() => {
@@ -1584,25 +1617,7 @@ export function DashboardClient({
 
           <section className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
             {dashboardCards.map((card) => (
-              <div
-                key={card.label}
-                className="crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4"
-              >
-                <div className="mb-2 flex items-center justify-between sm:mb-4">
-                  <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
-                    {card.label}
-                  </span>
-                  <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-white/10 sm:h-10 sm:w-10 sm:rounded-2xl">
-                    <card.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  </div>
-                </div>
-                <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
-                  {card.value}
-                </div>
-                <p className="mt-1 text-[10px] leading-none text-white/54 sm:mt-2 sm:text-sm sm:leading-normal">
-                  {card.hint}
-                </p>
-              </div>
+              <DashboardStatCard key={card.label} card={card} />
             ))}
           </section>
 
