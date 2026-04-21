@@ -86,6 +86,10 @@ export async function sendTelegramPhoto({
   chatId = getTelegramChatId(),
   filename,
 }: TelegramPhotoInput) {
+  const binary = buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  );
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   if (caption) {
@@ -93,7 +97,7 @@ export async function sendTelegramPhoto({
   }
   formData.append(
     "photo",
-    new Blob([buffer], { type: "image/jpeg" }),
+    new Blob([binary], { type: "image/jpeg" }),
     filename,
   );
 
@@ -120,6 +124,10 @@ export async function sendTelegramDocument({
   chatId = getTelegramChatId(),
   filename,
 }: TelegramPhotoInput) {
+  const binary = buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  );
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   if (caption) {
@@ -127,7 +135,7 @@ export async function sendTelegramDocument({
   }
   formData.append(
     "document",
-    new Blob([buffer], { type: "image/jpeg" }),
+    new Blob([binary], { type: "image/jpeg" }),
     filename,
   );
 
