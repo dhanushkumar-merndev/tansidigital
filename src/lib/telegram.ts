@@ -41,6 +41,12 @@ export function getTelegramDefaultChatId() {
   return getTelegramChatId();
 }
 
+function toBlobSafeJpegBytes(buffer: Uint8Array) {
+  const copied = new Uint8Array(buffer.byteLength);
+  copied.set(buffer);
+  return copied;
+}
+
 async function telegramRequest<T>(
   method: string,
   payload: Record<string, unknown>,
@@ -86,10 +92,7 @@ export async function sendTelegramPhoto({
   chatId = getTelegramChatId(),
   filename,
 }: TelegramPhotoInput) {
-  const binary = buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength,
-  );
+  const binary = toBlobSafeJpegBytes(buffer);
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   if (caption) {
@@ -124,10 +127,7 @@ export async function sendTelegramDocument({
   chatId = getTelegramChatId(),
   filename,
 }: TelegramPhotoInput) {
-  const binary = buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength,
-  );
+  const binary = toBlobSafeJpegBytes(buffer);
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   if (caption) {
