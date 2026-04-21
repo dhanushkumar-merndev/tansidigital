@@ -34,6 +34,15 @@ function parseCallbackData(value: string | undefined) {
   return { action, userId };
 }
 
+function isExpiredTelegramCallbackError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("query is too old") ||
+    message.includes("query id is invalid") ||
+    message.includes("response timeout expired")
+  );
+}
+
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as TelegramWebhookUpdate | null;
   const callbackQuery = body?.callback_query;
@@ -74,6 +83,27 @@ export async function POST(request: Request) {
     const desiredAllow = parsed.action === "approve" ? "TRUE" : "FALSE";
     const desiredState = parsed.action === "approve" ? "approved" : "blocked";
     const currentState = getApprovalState(row.allow);
+    const callbackMessage =
+      currentState === "pending"
+        ? desiredState === "approved"
+          ? "Access approved."
+          : "Access rejected."
+        : currentState === "approved"
+          ? "Already approved."
+          : "Already rejected.";
+
+    try {
+      await answerCallbackQuery(callbackQuery.id, callbackMessage);
+    } catch (error) {
+      if (!isExpiredTelegramCallbackError(error)) {
+        throw error;
+      }
+
+      console.warn("[telegram-webhook] Callback answer expired.", {
+        callbackId: callbackQuery.id,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
 
     if (currentState === "pending") {
       await updateAllowColumn(row.rowNumber, desiredAllow);
@@ -94,26 +124,22 @@ export async function POST(request: Request) {
     const chatId = callbackQuery.message?.chat?.id;
     const messageId = callbackQuery.message?.message_id;
 
-    await answerCallbackQuery(
-      callbackQuery.id,
-      currentState === "pending"
-        ? desiredState === "approved"
-          ? "Access approved."
-          : "Access rejected."
-        : currentState === "approved"
-          ? "Already approved."
-          : "Already rejected.",
-    );
-
     if (typeof chatId !== "undefined" && typeof messageId === "number") {
-      await editApprovalMessage({
-        chatId,
-        createdTime: row.createdTime,
-        messageId,
-        name: row.name,
-        status: getApprovalState(row.allow) === "approved" ? "approved" : "rejected",
-        userId: row.id,
-      });
+      try {
+        await editApprovalMessage({
+          chatId,
+          createdTime: row.createdTime,
+          messageId,
+          name: row.name,
+          status: getApprovalState(row.allow) === "approved" ? "approved" : "rejected",
+          userId: row.id,
+        });
+      } catch (error) {
+        console.warn("[telegram-webhook] Unable to edit Telegram message.", {
+          callbackId: callbackQuery.id,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
     }
 
     return NextResponse.json({ ok: true });

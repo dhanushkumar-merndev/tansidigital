@@ -10,6 +10,13 @@ type EditApprovalMessageInput = ApprovalMessageInput & {
   status: "approved" | "rejected";
 };
 
+type TelegramPhotoInput = {
+  buffer: Uint8Array;
+  caption?: string;
+  chatId?: number | string;
+  filename: string;
+};
+
 function getTelegramBotToken() {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 
@@ -28,6 +35,10 @@ function getTelegramChatId() {
   }
 
   return chatId;
+}
+
+export function getTelegramDefaultChatId() {
+  return getTelegramChatId();
 }
 
 async function telegramRequest<T>(
@@ -54,6 +65,87 @@ async function telegramRequest<T>(
   }
 
   return data.result as T;
+}
+
+export async function sendTelegramTextMessage(
+  text: string,
+  chatId = getTelegramChatId(),
+) {
+  return telegramRequest<{ chat: { id: number | string }; message_id: number }>(
+    "sendMessage",
+    {
+      chat_id: chatId,
+      text,
+    },
+  );
+}
+
+export async function sendTelegramPhoto({
+  buffer,
+  caption,
+  chatId = getTelegramChatId(),
+  filename,
+}: TelegramPhotoInput) {
+  const formData = new FormData();
+  formData.append("chat_id", String(chatId));
+  if (caption) {
+    formData.append("caption", caption);
+  }
+  formData.append(
+    "photo",
+    new Blob([buffer], { type: "image/jpeg" }),
+    filename,
+  );
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${getTelegramBotToken()}/sendPhoto`,
+    {
+      method: "POST",
+      body: formData,
+      cache: "no-store",
+    },
+  );
+  const data = (await response.json().catch(() => null)) as
+    | { description?: string; ok?: boolean }
+    | null;
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.description || "Telegram sendPhoto failed.");
+  }
+}
+
+export async function sendTelegramDocument({
+  buffer,
+  caption,
+  chatId = getTelegramChatId(),
+  filename,
+}: TelegramPhotoInput) {
+  const formData = new FormData();
+  formData.append("chat_id", String(chatId));
+  if (caption) {
+    formData.append("caption", caption);
+  }
+  formData.append(
+    "document",
+    new Blob([buffer], { type: "image/jpeg" }),
+    filename,
+  );
+
+  const response = await fetch(
+    `https://api.telegram.org/bot${getTelegramBotToken()}/sendDocument`,
+    {
+      method: "POST",
+      body: formData,
+      cache: "no-store",
+    },
+  );
+  const data = (await response.json().catch(() => null)) as
+    | { description?: string; ok?: boolean }
+    | null;
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.description || "Telegram sendDocument failed.");
+  }
 }
 
 function buildApprovalMessageText({
