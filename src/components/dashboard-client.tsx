@@ -49,8 +49,8 @@ import type {
 } from "@/lib/sheets";
 
 type DashboardClientProps = {
-  workbook: DashboardData;
   initialBrand: Brand;
+  initialWorkbook?: DashboardData | null;
 };
 
 type MetaCampaignSpend = {
@@ -70,10 +70,13 @@ type MetaSpendSummary = {
 };
 
 type DashboardCard = {
+  currency?: string;
+  format?: "compact" | "currency";
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
   isRefreshing?: boolean;
   label: string;
+  numericValue?: number;
   value: string;
 };
 
@@ -101,6 +104,16 @@ type PlatformDatum = {
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
 const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
 const META_SPEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const EMPTY_DASHBOARD_DATA: DashboardData = {
+  campaignAliasesByTab: {},
+  dailySummaries: [],
+  digitalLeads: [],
+  leadCountByTab: {},
+  redwingLocationLabels: [],
+  tabBrandLookup: {},
+  tabLabels: {},
+  tabs: [],
+};
 
 type FilterSelectProps = {
   disabled?: boolean;
@@ -219,7 +232,15 @@ const DashboardStatCard = React.memo(function DashboardStatCard({
       </div>
       <div className="flex items-center gap-2">
         <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
-          {card.value}
+          {typeof card.numericValue === "number" && card.format ? (
+            <AnimatedDashboardValue
+              currency={card.currency}
+              format={card.format}
+              value={card.numericValue}
+            />
+          ) : (
+            card.value
+          )}
         </div>
         <div
           className={`h-2 w-2 rounded-full bg-white/60 transition-opacity duration-150 ${
@@ -234,10 +255,67 @@ const DashboardStatCard = React.memo(function DashboardStatCard({
   );
 });
 
+function AnimatedDashboardValue({
+  value,
+  format,
+  currency,
+}: {
+  value: number;
+  format: "compact" | "currency";
+  currency?: string;
+}) {
+  const [displayValue, setDisplayValue] = React.useState(0);
+  const displayValueRef = React.useRef(0);
+
+  React.useEffect(() => {
+    const nextValue = Number.isFinite(value) ? value : 0;
+    const startValue = displayValueRef.current;
+    const delta = nextValue - startValue;
+
+    if (Math.abs(delta) < 0.01) {
+      displayValueRef.current = nextValue;
+      setDisplayValue(nextValue);
+      return;
+    }
+
+    const duration = 1100;
+    const startTime = performance.now();
+    let frameId = 0;
+
+    const tick = (now: number) => {
+      const progress = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextDisplayValue = startValue + delta * eased;
+      displayValueRef.current = nextDisplayValue;
+      setDisplayValue(nextDisplayValue);
+
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(tick);
+      } else {
+        displayValueRef.current = nextValue;
+        setDisplayValue(nextValue);
+      }
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [value]);
+
+  const formattedValue =
+    format === "currency"
+      ? formatCurrencyAmount(displayValue, currency)
+      : formatCompactNumber(displayValue);
+
+  return <>{formattedValue}</>;
+}
+
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     notation: "compact",
-    maximumFractionDigits: 1,
+    maximumFractionDigits: 0,
   }).format(value);
 }
 
@@ -574,8 +652,8 @@ function syncBrandMetadata(brand: Brand) {
 }
 
 export function DashboardClient({
-  workbook,
   initialBrand,
+  initialWorkbook = null,
 }: DashboardClientProps) {
   const [isPending, startTransition] = useTransition();
   const [isBrandPending, startBrandTransition] = useTransition();
@@ -600,6 +678,12 @@ export function DashboardClient({
   const [metaSpend, setMetaSpend] = React.useState<MetaSpendSummary | null>(null);
   const [metaSpendError, setMetaSpendError] = React.useState<string | null>(null);
   const [isMetaSpendLoading, setIsMetaSpendLoading] = React.useState(false);
+  const [isWorkbookLoading, setIsWorkbookLoading] = React.useState(
+    initialWorkbook === null,
+  );
+  const [workbook, setWorkbook] = React.useState<DashboardData>(
+    initialWorkbook ?? EMPTY_DASHBOARD_DATA,
+  );
   const metaSpendCacheRef = React.useRef(
     new Map<
       string,
@@ -611,13 +695,16 @@ export function DashboardClient({
   const searchParams = useSearchParams();
 
   React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsMounted(true);
-      window.dispatchEvent(new Event("resize"));
-    }, 300);
-
-    return () => clearTimeout(timer);
+    setIsMounted(true);
+    window.dispatchEvent(new Event("resize"));
   }, []);
+
+  React.useEffect(() => {
+    if (initialWorkbook) {
+      setWorkbook(initialWorkbook);
+      setIsWorkbookLoading(false);
+    }
+  }, [initialWorkbook]);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -652,13 +739,59 @@ export function DashboardClient({
 
   React.useEffect(() => {
     const interval = setInterval(() => {
-      router.refresh();
+      void loadWorkbookData({ silent: true });
     }, 1800000);
 
     return () => clearInterval(interval);
-  }, [router]);
+  }, []);
+
+  const loadWorkbookData = React.useEffectEvent(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!silent) {
+        setIsWorkbookLoading(true);
+      }
+
+      try {
+        const response = await fetch("/api/dashboard", {
+          cache: "no-store",
+          method: "GET",
+        });
+        const data = (await response.json().catch(() => null)) as DashboardData | null;
+
+        if (!response.ok || !data) {
+          throw new Error("Unable to load dashboard data right now.");
+        }
+
+        setWorkbook(data);
+      } catch (error) {
+        setWorkbook((current) => ({
+          ...current,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to load dashboard data right now.",
+        }));
+      } finally {
+        setIsWorkbookLoading(false);
+      }
+    },
+  );
+
+  React.useEffect(() => {
+    if (initialWorkbook) {
+      return;
+    }
+
+    void loadWorkbookData();
+  }, [initialWorkbook]);
 
   const hasSummaryData = workbook.dailySummaries.length > 0;
+  const hasWorkbookPayload =
+    workbook.dailySummaries.length > 0 ||
+    workbook.tabs.length > 0 ||
+    workbook.digitalLeads.length > 0 ||
+    Boolean(workbook.error);
+  const showInitialWorkbookLoading = isWorkbookLoading && !hasWorkbookPayload;
   const tabBrandLookup = workbook.tabBrandLookup;
 
   const filteredDashboardSummaries = React.useMemo(() => {
@@ -696,42 +829,6 @@ export function DashboardClient({
       aggregateMetricByTab(
         filteredDashboardSummaries,
         (summary) => summary.topCampaignCountsByTab,
-      ),
-    [filteredDashboardSummaries],
-  );
-
-  const aggregatedBigwingInstagramByTab = React.useMemo(
-    () =>
-      aggregateMetricByTab(
-        filteredDashboardSummaries,
-        (summary) => summary.bigwingInstagramCountsByTab,
-      ),
-    [filteredDashboardSummaries],
-  );
-
-  const aggregatedBigwingFacebookByTab = React.useMemo(
-    () =>
-      aggregateMetricByTab(
-        filteredDashboardSummaries,
-        (summary) => summary.bigwingFacebookCountsByTab,
-      ),
-    [filteredDashboardSummaries],
-  );
-
-  const aggregatedRedwingInstagramByTab = React.useMemo(
-    () =>
-      aggregateMetricByTab(
-        filteredDashboardSummaries,
-        (summary) => summary.redwingInstagramCountsByTab,
-      ),
-    [filteredDashboardSummaries],
-  );
-
-  const aggregatedRedwingFacebookByTab = React.useMemo(
-    () =>
-      aggregateMetricByTab(
-        filteredDashboardSummaries,
-        (summary) => summary.redwingFacebookCountsByTab,
       ),
     [filteredDashboardSummaries],
   );
@@ -1052,6 +1149,8 @@ export function DashboardClient({
         hint: totalLeadHint,
         icon: Users,
         label: "Total Leads",
+        format: "compact",
+        numericValue: totalLeads,
         value: formatCompactNumber(totalLeads),
       },
       {
@@ -1063,20 +1162,32 @@ export function DashboardClient({
             : "1 selected campaign",
         icon: Target,
         label: "Campaign Count",
+        format: "compact",
+        numericValue: selectedTabs.length,
         value: formatCompactNumber(selectedTabs.length),
       },
       {
+        currency: metaSpend?.currency,
+        format: metaSpend?.configured ? "currency" : undefined,
         hint: metaCostHint,
         icon: IndianRupee,
         isRefreshing: isMetaSpendLoading && Boolean(metaSpend),
         label: "Cost Spent",
+        numericValue: metaSpend?.configured ? metaSpend.totalSpend : undefined,
         value: metaCostValue,
       },
       {
+        currency: metaSpend?.currency,
+        format:
+          metaSpend?.configured && matchedCampaigns.length > 0 ? "currency" : undefined,
         hint: metaCpcHint,
         icon: Sparkles,
         isRefreshing: isMetaSpendLoading && Boolean(metaSpend),
         label: "Meta CPC",
+        numericValue:
+          metaSpend?.configured && matchedCampaigns.length > 0
+            ? metaCpcAverage
+            : undefined,
         value: metaCpcValue,
       },
     ];
@@ -1093,6 +1204,8 @@ export function DashboardClient({
     selectedTabs.length,
     totalLeads,
     metaSpend,
+    metaCpcAverage,
+    matchedCampaigns.length,
   ]);
 
   const filteredDigitalLeads = React.useMemo(() => {
@@ -1488,9 +1601,7 @@ export function DashboardClient({
         });
       }
 
-      startTransition(() => {
-        router.refresh();
-      });
+      void loadWorkbookData();
     } catch (error) {
       setDigitalError(
         error instanceof Error
@@ -1524,6 +1635,12 @@ export function DashboardClient({
                   data, delivering real-time insights into campaign performance,
                   platform splits, and regional rankings for Redwing and Bigwing.
                 </p>
+                {showInitialWorkbookLoading ? (
+                  <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-xs text-white/72">
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    Loading latest dashboard data...
+                  </div>
+                ) : null}
                 {workbook.error ? (
                   <p className="mt-3 rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
                     {workbook.error}
@@ -1601,7 +1718,7 @@ export function DashboardClient({
               label="Campaign"
               value={campaignFilter}
               onChange={setCampaignFilter}
-              disabled={brand === "all" || brandTabs.length === 0}
+              disabled={showInitialWorkbookLoading || brand === "all" || brandTabs.length === 0}
               options={[
                 { value: "all", label: "All campaigns" },
                 ...campaignOptions.map((campaign) => ({
@@ -1614,7 +1731,7 @@ export function DashboardClient({
             <DisabledAdNameSearchInput id="ad-search" />
           </section>
 
-          {!hasSummaryData ? (
+          {!showInitialWorkbookLoading && !hasSummaryData ? (
             <section className="crm-surface-radius border border-[#ffe7b0]/18 bg-[#ffe7b0]/8 p-5 text-[#ffe7b0] shadow-[0_20px_60px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
               <div className="flex items-start gap-3">
                 <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />

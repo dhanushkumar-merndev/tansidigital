@@ -149,7 +149,7 @@ function findBestCampaignMatch(
 }
 
 export async function POST(request: Request) {
-  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+  const authStatus = await getAuthAccessStatus();
 
   if (!authStatus.isAuthenticated) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });

@@ -4,7 +4,7 @@ import { getAuthAccessStatus } from "@/lib/auth";
 import { refreshWorkbookData } from "@/lib/sheets";
 
 export async function POST() {
-  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+  const authStatus = await getAuthAccessStatus();
 
   if (!authStatus.isAuthenticated) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });

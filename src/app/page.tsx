@@ -6,7 +6,6 @@ import { DashboardClient } from "@/components/dashboard-client";
 import { PinLogin } from "@/components/pin-login";
 import { getAuthAccessStatus } from "@/lib/auth";
 import { getBrandAssets, normalizeBrand } from "@/lib/brands";
-import { getDashboardData } from "@/lib/sheets";
 
 type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -45,21 +44,15 @@ export default async function Home({ searchParams }: PageProps) {
   const initialBrand = normalizeBrand(
     Array.isArray(params.brand) ? params.brand[0] : params.brand,
   );
-  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+  const authStatus = await getAuthAccessStatus();
 
   if (!authStatus.isAuthenticated) {
     return <PinLogin />;
   }
 
   if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
-    redirect(
-      authStatus.isAccessPending
-        ? "/access-blocked?state=pending"
-        : "/access-blocked?state=blocked",
-    );
+    redirect("/access-blocked");
   }
 
-  const workbook = await getDashboardData();
-
-  return <DashboardClient workbook={workbook} initialBrand={initialBrand} />;
+  return <DashboardClient initialBrand={initialBrand} />;
 }

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getAuthAccessStatus } from "@/lib/auth";
-import { refreshDashboardData } from "@/lib/sheets";
+import { getDashboardData } from "@/lib/sheets";
 
-export async function POST() {
+export async function GET() {
   const authStatus = await getAuthAccessStatus();
 
   if (!authStatus.isAuthenticated) {
@@ -20,15 +20,6 @@ export async function POST() {
     );
   }
 
-  const dashboard = await refreshDashboardData();
-
-  if (dashboard.error) {
-    return NextResponse.json({ ok: false, error: dashboard.error }, { status: 502 });
-  }
-
-  return NextResponse.json({
-    ok: true,
-    tabs: dashboard.tabs.length,
-    days: dashboard.dailySummaries.length,
-  });
+  const dashboard = await getDashboardData();
+  return NextResponse.json(dashboard);
 }

@@ -24,7 +24,7 @@ function normalizePage(value: string | null | undefined) {
 }
 
 export async function GET(request: Request) {
-  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+  const authStatus = await getAuthAccessStatus();
 
   if (!authStatus.isAuthenticated) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });

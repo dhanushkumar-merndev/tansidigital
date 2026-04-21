@@ -242,7 +242,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                         Save your access name
                       </h2>
                       <p className="mt-2 text-sm leading-6 text-white/62">
-                        This name is stored once on this browser as <span className="font-medium text-white/82">name_digital</span> and reused next time.
+                        This name is stored once on this browser 
                       </p>
                     </div>
 

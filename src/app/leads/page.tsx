@@ -58,18 +58,14 @@ export default async function LeadsPage({ searchParams }: PageProps) {
   const initialBrand = normalizeLeadBrand(
     Array.isArray(params.brand) ? params.brand[0] : params.brand,
   );
-  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+  const authStatus = await getAuthAccessStatus();
 
   if (!authStatus.isAuthenticated) {
     return <PinLogin />;
   }
 
   if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
-    redirect(
-      authStatus.isAccessPending
-        ? "/access-blocked?state=pending"
-        : "/access-blocked?state=blocked",
-    );
+    redirect("/access-blocked");
   }
 
   const initialQuery: LeadsPageQuery = {
