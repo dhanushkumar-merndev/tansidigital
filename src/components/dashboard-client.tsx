@@ -70,6 +70,7 @@ type MetaSpendSummary = {
 };
 
 type DashboardCard = {
+  animate?: boolean;
   currency?: string;
   format?: "compact" | "currency";
   hint: string;
@@ -77,8 +78,21 @@ type DashboardCard = {
   isRefreshing?: boolean;
   label: string;
   numericValue?: number;
+  startingValue?: number;
   value: string;
 };
+
+type CachedDashboardCard = Pick<
+  DashboardCard,
+  "currency" | "format" | "label" | "numericValue" | "value"
+>;
+
+type DashboardStatCacheBucket = Record<
+  string,
+  { cards: CachedDashboardCard[]; updatedAt: number }
+>;
+
+type DashboardStatCacheStore = Partial<Record<Brand, DashboardStatCacheBucket>>;
 
 type TimelineDatum = {
   bigwingLeads: number;
@@ -103,6 +117,8 @@ type PlatformDatum = {
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
 const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
+const DASHBOARD_STAT_CACHE_KEY = "crm_dashboard_stat_cache_v1";
+const DASHBOARD_STAT_CACHE_WRITE_INTERVAL_MS = 5_000;
 const META_SPEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const EMPTY_DASHBOARD_DATA: DashboardData = {
   campaignAliasesByTab: {},
@@ -234,8 +250,10 @@ const DashboardStatCard = React.memo(function DashboardStatCard({
         <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
           {typeof card.numericValue === "number" && card.format ? (
             <AnimatedDashboardValue
+              animate={card.animate}
               currency={card.currency}
               format={card.format}
+              startingValue={card.startingValue}
               value={card.numericValue}
             />
           ) : (
@@ -259,20 +277,42 @@ function AnimatedDashboardValue({
   value,
   format,
   currency,
+  animate = true,
+  startingValue,
 }: {
+  animate?: boolean;
   value: number;
   format: "compact" | "currency";
   currency?: string;
+  startingValue?: number;
 }) {
-  const [displayValue, setDisplayValue] = React.useState(0);
-  const displayValueRef = React.useRef(0);
+  const initialValue =
+    typeof startingValue === "number" && Number.isFinite(startingValue)
+      ? startingValue
+      : animate
+        ? 0
+        : value;
+  const [displayValue, setDisplayValue] = React.useState(initialValue);
+  const displayValueRef = React.useRef(initialValue);
 
   React.useEffect(() => {
     const nextValue = Number.isFinite(value) ? value : 0;
-    const startValue = displayValueRef.current;
+    const effectiveStartValue =
+      typeof startingValue === "number" &&
+      Number.isFinite(startingValue) &&
+      Math.abs(displayValueRef.current) < 0.01
+        ? startingValue
+        : displayValueRef.current;
+    const startValue = effectiveStartValue;
     const delta = nextValue - startValue;
 
     if (Math.abs(delta) < 0.01) {
+      displayValueRef.current = nextValue;
+      setDisplayValue(nextValue);
+      return;
+    }
+
+    if (!animate) {
       displayValueRef.current = nextValue;
       setDisplayValue(nextValue);
       return;
@@ -302,7 +342,7 @@ function AnimatedDashboardValue({
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [value]);
+  }, [animate, startingValue, value]);
 
   const formattedValue =
     format === "currency"
@@ -326,6 +366,55 @@ function formatCurrencyAmount(value: number, currency = "INR") {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function readDashboardStatCacheStore(): DashboardStatCacheStore {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(DASHBOARD_STAT_CACHE_KEY);
+    if (!rawValue) {
+      return {};
+    }
+
+    const parsed = JSON.parse(rawValue) as DashboardStatCacheStore;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDashboardStatCacheStore(store: DashboardStatCacheStore) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(DASHBOARD_STAT_CACHE_KEY, JSON.stringify(store));
+  } catch {
+    // Ignore storage failures so the live dashboard keeps working.
+  }
+}
+
+function buildDashboardStatCacheKey({
+  brand,
+  campaignFilter,
+  from,
+  to,
+}: {
+  brand: Brand;
+  campaignFilter: string;
+  from: Date | null | undefined;
+  to: Date | null | undefined;
+}) {
+  return JSON.stringify({
+    brand,
+    campaignFilter,
+    from: from ? getIstDateKey(from) : null,
+    to: to ? getIstDateKey(to) : null,
+  });
 }
 
 function renderTooltipRow(
@@ -662,10 +751,10 @@ export function DashboardClient({
   const [isDesktop, setIsDesktop] = React.useState(false);
   const [brand, setBrand] = React.useState<Brand>(initialBrand);
   const [campaignFilter, setCampaignFilter] = React.useState("all");
-  const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
+  const [dateRange, setDateRange] = React.useState<DateRange | undefined>(() => ({
     from: DASHBOARD_RANGE_START,
     to: new Date(),
-  });
+  }));
   const [isDigitalModalOpen, setIsDigitalModalOpen] = React.useState(false);
   const [digitalPin, setDigitalPin] = React.useState("");
   const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
@@ -681,6 +770,9 @@ export function DashboardClient({
   const [isWorkbookLoading, setIsWorkbookLoading] = React.useState(
     initialWorkbook === null,
   );
+  const [cachedDashboardCards, setCachedDashboardCards] = React.useState<
+    CachedDashboardCard[] | null
+  >(null);
   const [workbook, setWorkbook] = React.useState<DashboardData>(
     initialWorkbook ?? EMPTY_DASHBOARD_DATA,
   );
@@ -792,7 +884,23 @@ export function DashboardClient({
     workbook.digitalLeads.length > 0 ||
     Boolean(workbook.error);
   const showInitialWorkbookLoading = isWorkbookLoading && !hasWorkbookPayload;
+  const dashboardStatCacheKey = React.useMemo(
+    () =>
+      buildDashboardStatCacheKey({
+        brand,
+        campaignFilter,
+        from: dateRange?.from,
+        to: dateRange?.to,
+      }),
+    [brand, campaignFilter, dateRange?.from, dateRange?.to],
+  );
   const tabBrandLookup = workbook.tabBrandLookup;
+
+  React.useLayoutEffect(() => {
+    setCachedDashboardCards(
+      readDashboardStatCacheStore()[brand]?.[dashboardStatCacheKey]?.cards ?? null,
+    );
+  }, [brand, dashboardStatCacheKey]);
 
   const filteredDashboardSummaries = React.useMemo(() => {
     const fromDate = dateRange?.from;
@@ -937,6 +1045,11 @@ export function DashboardClient({
   }, [metaSpendDateRange, selectedCampaignRequests]);
 
   React.useEffect(() => {
+    if (showInitialWorkbookLoading) {
+      setIsMetaSpendLoading(false);
+      return;
+    }
+
     if (!metaSpendDateRange) {
       setMetaSpend(null);
       setMetaSpendError(null);
@@ -1063,7 +1176,12 @@ export function DashboardClient({
       controller.abort();
       clearInterval(refreshInterval);
     };
-  }, [metaSpendDateRange, metaSpendRequestKey, selectedCampaignRequests]);
+  }, [
+    metaSpendDateRange,
+    metaSpendRequestKey,
+    selectedCampaignRequests,
+    showInitialWorkbookLoading,
+  ]);
 
   const matchedCampaigns = metaSpend?.campaigns ?? [];
   const metaCpcTotal = matchedCampaigns.reduce(
@@ -1088,7 +1206,7 @@ export function DashboardClient({
 
   const metaCostHint = React.useMemo(() => {
     if (isMetaSpendLoading && !metaSpend) {
-      return "Fetching live Meta cost for the selected filters.";
+      return "Fetching live Meta cost.";
     }
 
     if (metaSpendError) {
@@ -1116,7 +1234,7 @@ export function DashboardClient({
 
   const metaCpcHint = React.useMemo(() => {
     if (isMetaSpendLoading && !metaSpend) {
-      return "Fetching live Meta CPC for the selected filters.";
+      return "Fetching live Meta CPC.";
     }
 
     if (metaSpendError) {
@@ -1124,7 +1242,7 @@ export function DashboardClient({
     }
 
     if (!metaSpend?.configured) {
-      return "Meta configuration is required for live CPC.";
+      return "Meta configuration is required.";
     }
 
     if (matchedCampaigns.length === 0) {
@@ -1132,7 +1250,7 @@ export function DashboardClient({
     }
 
     return campaignFilter === "all"
-      ? `Average of ${matchedCampaigns.length} matched campaign CPC values.`
+      ? `Average of ${matchedCampaigns.length} campaign CPC.`
       : "Live CPC from Meta for the selected campaign.";
   }, [campaignFilter, isMetaSpendLoading, matchedCampaigns.length, metaSpend, metaSpendError]);
 
@@ -1141,7 +1259,7 @@ export function DashboardClient({
       campaignFilter === "all"
         ? brand === "all"
         ? `Total leads among ${selectedTabs.length} campaigns`
-          : `${BRAND_CONFIG[brand].label} total leads in the selected date range`
+          : `${BRAND_CONFIG[brand].label} total leads`
         : "Total leads for the selected campaign";
 
     const cards: DashboardCard[] = [
@@ -1171,7 +1289,7 @@ export function DashboardClient({
         format: metaSpend?.configured ? "currency" : undefined,
         hint: metaCostHint,
         icon: IndianRupee,
-        isRefreshing: isMetaSpendLoading && Boolean(metaSpend),
+        isRefreshing: isMetaSpendLoading,
         label: "Cost Spent",
         numericValue: metaSpend?.configured ? metaSpend.totalSpend : undefined,
         value: metaCostValue,
@@ -1182,7 +1300,7 @@ export function DashboardClient({
           metaSpend?.configured && matchedCampaigns.length > 0 ? "currency" : undefined,
         hint: metaCpcHint,
         icon: Sparkles,
-        isRefreshing: isMetaSpendLoading && Boolean(metaSpend),
+        isRefreshing: isMetaSpendLoading,
         label: "Meta CPC",
         numericValue:
           metaSpend?.configured && matchedCampaigns.length > 0
@@ -1207,6 +1325,138 @@ export function DashboardClient({
     metaCpcAverage,
     matchedCampaigns.length,
   ]);
+
+  React.useEffect(() => {
+    if (!hasWorkbookPayload || showInitialWorkbookLoading) {
+      return;
+    }
+
+    const persistCards = () => {
+      const existingStore = readDashboardStatCacheStore();
+      const brandCacheBucket = existingStore[brand] ?? {};
+      const previousCards = brandCacheBucket[dashboardStatCacheKey]?.cards ?? [];
+      const previousByLabel = new Map(
+        previousCards.map((card) => [card.label, card]),
+      );
+
+      const nextCards = dashboardCards.map<CachedDashboardCard>((card) => {
+        const isStableValue =
+          typeof card.numericValue === "number" &&
+          Number.isFinite(card.numericValue);
+
+        if (isStableValue) {
+          return {
+            currency: card.currency,
+            format: card.format,
+            label: card.label,
+            numericValue: card.numericValue,
+            value: card.value,
+          };
+        }
+
+        return (
+          previousByLabel.get(card.label) ?? {
+            currency: card.currency,
+            format: card.format,
+            label: card.label,
+            numericValue: card.numericValue,
+            value: card.value,
+          }
+        );
+      });
+
+      const nextStore: DashboardStatCacheStore = {
+        ...existingStore,
+        [brand]: {
+          ...brandCacheBucket,
+          [dashboardStatCacheKey]: {
+            cards: nextCards,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+
+      writeDashboardStatCacheStore(nextStore);
+      setCachedDashboardCards(nextCards);
+    };
+
+    persistCards();
+    const interval = window.setInterval(
+      persistCards,
+      DASHBOARD_STAT_CACHE_WRITE_INTERVAL_MS,
+    );
+
+    return () => window.clearInterval(interval);
+  }, [
+    brand,
+    dashboardCards,
+    dashboardStatCacheKey,
+    hasWorkbookPayload,
+    showInitialWorkbookLoading,
+  ]);
+
+  const displayDashboardCards = React.useMemo(() => {
+    if (!cachedDashboardCards?.length) {
+      return dashboardCards;
+    }
+
+    const cachedCardsByLabel = new Map(
+      cachedDashboardCards.map((card) => [card.label, card]),
+    );
+
+    return dashboardCards.map((card) => {
+      const cachedCard = cachedCardsByLabel.get(card.label);
+      if (!cachedCard) {
+        return card;
+      }
+
+      if (showInitialWorkbookLoading) {
+        return {
+          ...card,
+          animate: false,
+          currency: cachedCard.currency ?? card.currency,
+          format: cachedCard.format ?? card.format,
+          isRefreshing: false,
+          numericValue: cachedCard.numericValue,
+          value: cachedCard.value,
+        };
+      }
+
+      if (typeof card.numericValue === "number") {
+        const cachedNumericValue =
+          typeof cachedCard.numericValue === "number" &&
+          Number.isFinite(cachedCard.numericValue)
+            ? cachedCard.numericValue
+            : null;
+        const shouldAnimateFromCache =
+          cachedNumericValue !== null &&
+          Math.abs(card.numericValue - cachedNumericValue) >= 0.01;
+
+        return {
+          ...card,
+          animate: shouldAnimateFromCache,
+          startingValue: shouldAnimateFromCache ? cachedNumericValue : undefined,
+        };
+      }
+
+      if (
+        card.isRefreshing &&
+        typeof cachedCard.numericValue === "number" &&
+        cachedCard.format
+      ) {
+        return {
+          ...card,
+          animate: false,
+          currency: cachedCard.currency ?? card.currency,
+          format: cachedCard.format ?? card.format,
+          numericValue: cachedCard.numericValue,
+          value: cachedCard.value,
+        };
+      }
+
+      return card;
+    });
+  }, [cachedDashboardCards, dashboardCards, showInitialWorkbookLoading]);
 
   const filteredDigitalLeads = React.useMemo(() => {
     const fromDate = dateRange?.from;
@@ -1635,12 +1885,7 @@ export function DashboardClient({
                   data, delivering real-time insights into campaign performance,
                   platform splits, and regional rankings for Redwing and Bigwing.
                 </p>
-                {showInitialWorkbookLoading ? (
-                  <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-xs text-white/72">
-                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                    Loading latest dashboard data...
-                  </div>
-                ) : null}
+
                 {workbook.error ? (
                   <p className="mt-3 rounded-2xl border border-[#ffb4b4]/20 bg-[#ffb4b4]/8 px-4 py-3 text-sm text-[#ffe2e2]">
                     {workbook.error}
@@ -1750,7 +1995,7 @@ export function DashboardClient({
           ) : null}
 
           <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-            {dashboardCards.map((card) => (
+            {displayDashboardCards.map((card) => (
               <DashboardStatCard key={card.label} card={card} />
             ))}
           </section>
