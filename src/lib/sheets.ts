@@ -206,13 +206,13 @@ const DEFAULT_REDWING_LOCATION_LABELS = [
 const LEADS_PAGE_SIZE = 100;
 const WORKBOOK_DB_SCHEMA_VERSION = "4";
 const IS_CLOUD_ENVIRONMENT = process.env.NODE_ENV === "production" || !!process.env.VERCEL || !!process.env.AWS_REGION;
-const LEADS_INDEX_SOURCE_PATH = path.join(process.cwd(), "data", "workbook-leads.sqlite");
+const LEADS_INDEX_SOURCE_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), "data", "workbook-leads.sqlite");
 const LEADS_INDEX_RUNTIME_PATH = (() => {
   const configuredPath = process.env.WORKBOOK_LEADS_INDEX_PATH?.trim();
   if (configuredPath) {
     return path.isAbsolute(configuredPath)
       ? configuredPath
-      : path.join(process.cwd(), configuredPath);
+      : path.join(/*turbopackIgnore: true*/ process.cwd(), configuredPath);
   }
 
   if (IS_CLOUD_ENVIRONMENT) {

@@ -27,11 +27,11 @@ type BrandReport = {
 
 const REPORT_FONT_FAMILY = "Digital Leads Report Sans";
 const REPORT_FONT_PATHS = [
-  join(process.cwd(), "netlify", "font", "Avenir LT Std 55 Roman.otf"),
-  join(process.cwd(), "netlify", "font", "report-font.ttf"),
-  join(process.cwd(), "netlify", "fonts", "report-font.ttf"),
-  join(process.cwd(), "netlify", "fonts", "DigitalLeads.ttf"),
-  join(process.cwd(), "public", "fonts", "report-font.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "Avenir LT Std 55 Roman.otf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "report-font.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "report-font.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "DigitalLeads.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "public", "fonts", "report-font.ttf"),
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
@@ -113,7 +113,7 @@ function buildBrandReport(
       ? dashboard.tabs
       : dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === brand);
   const columns = relevantTabs.map((tab) => ({
-    brand: dashboard.tabBrandLookup[tab] === "bigwing" ? "bigwing" : "redwing",
+    brand: dashboard.tabBrandLookup[tab] === "bigwing" ? ("bigwing" as const) : ("redwing" as const),
     label: dashboard.tabLabels[tab] || tab,
     tab,
   }));
