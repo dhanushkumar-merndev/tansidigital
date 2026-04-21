@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import { GlobalFonts, createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 
@@ -14,6 +15,11 @@ type BrandReport = {
 
 const REPORT_FONT_FAMILY = "Digital Leads Report Sans";
 const REPORT_FONT_PATHS = [
+  join(process.cwd(), "netlify", "font", "Avenir LT Std 55 Roman.otf"),
+  join(process.cwd(), "netlify", "font", "report-font.ttf"),
+  join(process.cwd(), "netlify", "fonts", "report-font.ttf"),
+  join(process.cwd(), "netlify", "fonts", "DigitalLeads.ttf"),
+  join(process.cwd(), "public", "fonts", "report-font.ttf"),
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
@@ -72,10 +78,6 @@ function formatIstDate(dateKey: string) {
     year: "numeric",
     timeZone: "Asia/Kolkata",
   }).format(parsedDate);
-}
-
-function getReportTimeLabel() {
-  return process.env.TELEGRAM_DAILY_REPORT_TIME_IST?.trim() || "20:00";
 }
 
 function getBrandHeading(brand: Brand) {
@@ -181,7 +183,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
   context.fillStyle = "rgba(255,255,255,0.72)";
   context.font = `500 ${Math.round(17 * scale)}px ${fontFamily}`;
   context.fillText(
-    `${getBrandHeading(report.brand)} • ${formatIstDate(dateKey)} • ${getReportTimeLabel()} IST`,
+    `${getBrandHeading(report.brand)} • ${formatIstDate(dateKey)}`,
     padding,
     cursorY + Math.round(70 * scale),
   );
@@ -291,7 +293,6 @@ export async function sendDailyTelegramReports() {
       [
         "Digital Leads Report",
         `Date: ${formatIstDate(todayKey)}`,
-        `Scheduled Time: ${getReportTimeLabel()} IST`,
         "No DATA summary row was found for today.",
       ].join("\n"),
     );
