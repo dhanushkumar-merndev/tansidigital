@@ -1,4 +1,6 @@
-import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
+import { existsSync } from "node:fs";
+
+import { GlobalFonts, createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 
 import { BRAND_CONFIG, type Brand } from "./brands";
 import { getDashboardData } from "./sheets";
@@ -9,6 +11,48 @@ type BrandReport = {
   campaignRows: Array<{ label: string; leads: number }>;
   totalLeads: number;
 };
+
+const REPORT_FONT_FAMILY = "Digital Leads Report Sans";
+const REPORT_FONT_PATHS = [
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+  "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+  "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+];
+
+let resolvedReportFontFamily = "sans-serif";
+let hasAttemptedReportFontRegistration = false;
+
+function getReportFontFamily() {
+  if (hasAttemptedReportFontRegistration) {
+    return resolvedReportFontFamily;
+  }
+
+  hasAttemptedReportFontRegistration = true;
+
+  for (const fontPath of REPORT_FONT_PATHS) {
+    if (!existsSync(fontPath)) {
+      continue;
+    }
+
+    try {
+      const fontKey = GlobalFonts.registerFromPath(fontPath, REPORT_FONT_FAMILY);
+
+      if (fontKey) {
+        resolvedReportFontFamily = `"${REPORT_FONT_FAMILY}"`;
+        return resolvedReportFontFamily;
+      }
+    } catch (error) {
+      console.warn("[daily-telegram-report] Failed to register report font.", {
+        error: error instanceof Error ? error.message : String(error),
+        fontPath,
+      });
+    }
+  }
+
+  console.warn("[daily-telegram-report] No server font was registered. Falling back to sans-serif.");
+  return resolvedReportFontFamily;
+}
 
 function getIstDateKey(date: Date) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -95,6 +139,7 @@ function wrapCanvasText(
 }
 
 function createReportImage(report: BrandReport, dateKey: string) {
+  const fontFamily = getReportFontFamily();
   const isBigwingTheme = report.brand === "bigwing";
   const background = isBigwingTheme ? "#050505" : "#0D4D8B";
   const panel = isBigwingTheme ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.12)";
@@ -130,11 +175,11 @@ function createReportImage(report: BrandReport, dateKey: string) {
   let cursorY = padding;
 
   context.fillStyle = "#FFFFFF";
-  context.font = `700 ${Math.round(34 * scale)}px sans-serif`;
+  context.font = `700 ${Math.round(34 * scale)}px ${fontFamily}`;
   context.fillText("Digital Leads", padding, cursorY + Math.round(34 * scale));
 
   context.fillStyle = "rgba(255,255,255,0.72)";
-  context.font = `500 ${Math.round(17 * scale)}px sans-serif`;
+  context.font = `500 ${Math.round(17 * scale)}px ${fontFamily}`;
   context.fillText(
     `${getBrandHeading(report.brand)} • ${formatIstDate(dateKey)} • ${getReportTimeLabel()} IST`,
     padding,
@@ -146,7 +191,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
   context.strokeStyle = border;
   context.strokeRect(padding, cursorY + Math.round(92 * scale), width - padding * 2, summaryHeight);
   context.fillStyle = "#FFFFFF";
-  context.font = `700 ${Math.round(20 * scale)}px sans-serif`;
+  context.font = `700 ${Math.round(20 * scale)}px ${fontFamily}`;
   context.fillText(
     `Total Leads: ${report.totalLeads}`,
     padding + Math.round(20 * scale),
@@ -165,7 +210,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
   context.strokeRect(padding, cursorY, leftColumnWidth, tableHeaderHeight);
   context.strokeRect(padding + leftColumnWidth, cursorY, rightColumnWidth, tableHeaderHeight);
   context.fillStyle = "#FFFFFF";
-  context.font = `700 ${Math.round(18 * scale)}px sans-serif`;
+  context.font = `700 ${Math.round(18 * scale)}px ${fontFamily}`;
   context.fillText("Campaign", padding + Math.round(18 * scale), cursorY + Math.round(36 * scale));
   context.textAlign = "center";
   context.fillText(
@@ -188,7 +233,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
     context.strokeRect(padding + leftColumnWidth, rowY, rightColumnWidth, rowHeight);
 
     context.fillStyle = "#FFFFFF";
-    context.font = `600 ${Math.round(16 * scale)}px sans-serif`;
+    context.font = `600 ${Math.round(16 * scale)}px ${fontFamily}`;
     context.textAlign = "left";
     const labelLines = wrapCanvasText(
       context,
@@ -223,7 +268,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
   context.strokeRect(padding, cursorY, leftColumnWidth, footerHeight);
   context.strokeRect(padding + leftColumnWidth, cursorY, rightColumnWidth, footerHeight);
   context.fillStyle = "#FFFFFF";
-  context.font = `700 ${Math.round(18 * scale)}px sans-serif`;
+  context.font = `700 ${Math.round(18 * scale)}px ${fontFamily}`;
   context.textAlign = "left";
   context.fillText("Total", padding + Math.round(16 * scale), cursorY + footerHeight / 2 + Math.round(1 * scale));
   context.textAlign = "center";
