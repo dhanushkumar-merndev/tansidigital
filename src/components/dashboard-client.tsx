@@ -24,6 +24,7 @@ import {
   FileUp,
   IndianRupee,
   KeyRound,
+  Loader2,
   LoaderCircle,
   LogOut,
   Search,
@@ -638,6 +639,47 @@ function formatCampaignAxisLabel(value: string) {
   return words.map((word) => word.charAt(0).toUpperCase()).join("");
 }
 
+function formatExportDateLabel(dateKey: string) {
+  const parsedDate = parseDate(dateKey);
+  if (!parsedDate) {
+    return dateKey;
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsedDate);
+}
+
+function wrapCanvasText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return [""];
+  }
+
+  const lines: string[] = [];
+  let currentLine = words[0] ?? "";
+
+  for (const word of words.slice(1)) {
+    const nextLine = `${currentLine} ${word}`;
+    if (context.measureText(nextLine).width <= maxWidth) {
+      currentLine = nextLine;
+      continue;
+    }
+
+    lines.push(currentLine);
+    currentLine = word;
+  }
+
+  lines.push(currentLine);
+  return lines;
+}
+
 function aggregateMetricByTab(
   summaries: DashboardDailySummary[],
   selector: (summary: DashboardDailySummary) => Record<string, number>,
@@ -759,6 +801,7 @@ export function DashboardClient({
 }: DashboardClientProps) {
   const [isPending, startTransition] = useTransition();
   const [isBrandPending, startBrandTransition] = useTransition();
+  const [isExportingDigitalLeads, setIsExportingDigitalLeads] = React.useState(false);
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isMounted, setIsMounted] = React.useState(false);
   const [isDesktop, setIsDesktop] = React.useState(false);
@@ -998,6 +1041,60 @@ export function DashboardClient({
     () => selectedTabs.filter((tab) => tabBrandLookup[tab] === "redwing"),
     [selectedTabs, tabBrandLookup],
   );
+
+  const digitalLeadsExportTable = React.useMemo(() => {
+    const exportColumns: DigitalLeadsExportColumn[] = selectedTabs.map((tab) => ({
+      brand: tabBrandLookup[tab] === "bigwing" ? "bigwing" : "redwing",
+      label: workbook.tabLabels?.[tab] || tab,
+      tab,
+    }));
+    const todayDateKey = getIstDateKey(new Date());
+
+    const fromDate = dateRange?.from ?? dateRange?.to;
+    const toDate = dateRange?.to ?? dateRange?.from;
+    const dateKeys =
+      fromDate && toDate
+        ? buildDateKeysInRange(startOfDay(fromDate), startOfDay(toDate))
+        : filteredDashboardSummaries.map((summary) => summary.date);
+    const summariesByDate = new Map(
+      filteredDashboardSummaries.map((summary) => [summary.date, summary] as const),
+    );
+
+    const rows: DigitalLeadsExportRow[] = dateKeys
+      .filter((dateKey) => dateKey !== todayDateKey)
+      .map((dateKey) => {
+        const summary = summariesByDate.get(dateKey);
+        const values = exportColumns.map((column) => summary?.leadCountsByTab[column.tab] ?? 0);
+
+        return {
+          dateKey,
+          label: formatExportDateLabel(dateKey),
+          values,
+        };
+      });
+
+    const totals = exportColumns.map((column) =>
+      rows.reduce((total, row) => {
+        const columnIndex = exportColumns.findIndex(
+          (candidate) => candidate.tab === column.tab,
+        );
+        return total + (columnIndex >= 0 ? row.values[columnIndex] ?? 0 : 0);
+      }, 0),
+    );
+
+    return {
+      columns: exportColumns,
+      rows,
+      totals,
+    };
+  }, [
+    dateRange?.from,
+    dateRange?.to,
+    filteredDashboardSummaries,
+    selectedTabs,
+    tabBrandLookup,
+    workbook.tabLabels,
+  ]);
 
   const totalLeads = React.useMemo(
     () =>
@@ -1708,6 +1805,247 @@ export function DashboardClient({
     redwingLocationData.length * (brand === "redwing" ? 32 : 42),
   );
 
+  async function handleExportDigitalLeadsImage() {
+    if (
+      isExportingDigitalLeads ||
+      digitalLeadsExportTable.columns.length === 0 ||
+      digitalLeadsExportTable.rows.length === 0
+    ) {
+      return;
+    }
+
+    setIsExportingDigitalLeads(true);
+
+    try {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      const isBigwingTheme = brand === "bigwing";
+      const exportBackground = isBigwingTheme ? "#050505" : "#0D4D8B";
+      const exportPanelStrong = isBigwingTheme
+        ? "rgba(255,255,255,0.12)"
+        : "rgba(255,255,255,0.14)";
+      const exportPanelSoft = isBigwingTheme
+        ? "rgba(255,255,255,0.08)"
+        : "rgba(255,255,255,0.12)";
+      const exportRowEven = isBigwingTheme
+        ? "rgba(255,255,255,0.04)"
+        : "rgba(255,255,255,0.05)";
+      const exportRowOdd = isBigwingTheme
+        ? "rgba(255,255,255,0.025)"
+        : "rgba(255,255,255,0.03)";
+      const exportBorder = "rgba(255,255,255,0.18)";
+      const exportScale = 1.4;
+      const paddingX = 44 * exportScale;
+      const paddingY = 38 * exportScale;
+      const titleHeight = 56 * exportScale;
+      const groupRowHeight = 42 * exportScale;
+      const headerRowHeight = 64 * exportScale;
+      const bodyRowHeight = 42 * exportScale;
+      const totalRowHeight = 46 * exportScale;
+      const dateColumnWidth = 144 * exportScale;
+      const campaignColumnWidth = 156 * exportScale;
+      const tableWidth =
+        dateColumnWidth +
+        digitalLeadsExportTable.columns.length * campaignColumnWidth;
+      const canvasWidth = paddingX * 2 + tableWidth;
+      const canvasHeight =
+        paddingY * 2 +
+        titleHeight +
+        groupRowHeight +
+        headerRowHeight +
+        digitalLeadsExportTable.rows.length * bodyRowHeight +
+        totalRowHeight;
+      const canvas = document.createElement("canvas");
+      const pixelRatio = Math.max(window.devicePixelRatio || 1, 5);
+
+      canvas.width = Math.round(canvasWidth * pixelRatio);
+      canvas.height = Math.round(canvasHeight * pixelRatio);
+      canvas.style.width = `${canvasWidth}px`;
+      canvas.style.height = `${canvasHeight}px`;
+
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Canvas export is unavailable in this browser.");
+      }
+
+      context.scale(pixelRatio, pixelRatio);
+      context.fillStyle = exportBackground;
+      context.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      const left = paddingX;
+      let cursorY = paddingY;
+
+      context.fillStyle = "#FFFFFF";
+      context.font = `700 ${Math.round(28 * exportScale)}px Arial`;
+      context.fillText("Digital Leads", left, cursorY + 26 * exportScale);
+
+      context.fillStyle = "rgba(255,255,255,0.72)";
+      context.font = `400 ${Math.round(13 * exportScale)}px Arial`;
+      context.fillText(
+        `${brand === "all" ? "All" : BRAND_CONFIG[brand].label} • ${digitalLeadsExportTable.rows.length} day${digitalLeadsExportTable.rows.length === 1 ? "" : "s"}`,
+        left,
+        cursorY + 48 * exportScale,
+      );
+
+      cursorY += titleHeight;
+
+      const bigwingColumns = digitalLeadsExportTable.columns.filter(
+        (column) => column.brand === "bigwing",
+      );
+      const redwingColumns = digitalLeadsExportTable.columns.filter(
+        (column) => column.brand === "redwing",
+      );
+
+      context.fillStyle = exportPanelSoft;
+      context.fillRect(left, cursorY, dateColumnWidth, groupRowHeight);
+
+      let groupStartX = left + dateColumnWidth;
+      const brandGroups = [
+        { columns: bigwingColumns, label: "Bigwing" },
+        { columns: redwingColumns, label: "Redwing" },
+      ].filter((group) => group.columns.length > 0);
+
+      for (const group of brandGroups) {
+        const groupWidth = group.columns.length * campaignColumnWidth;
+        context.fillStyle = exportPanelSoft;
+        context.fillRect(groupStartX, cursorY, groupWidth, groupRowHeight);
+        context.strokeStyle = exportBorder;
+        context.strokeRect(groupStartX, cursorY, groupWidth, groupRowHeight);
+        context.fillStyle = "#FFFFFF";
+        context.font = `700 ${Math.round(14 * exportScale)}px Arial`;
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(
+          group.label,
+          groupStartX + groupWidth / 2,
+          cursorY + groupRowHeight / 2,
+        );
+        groupStartX += groupWidth;
+      }
+
+      cursorY += groupRowHeight;
+
+      context.textAlign = "left";
+      context.textBaseline = "middle";
+      context.fillStyle = exportPanelStrong;
+      context.fillRect(left, cursorY, dateColumnWidth, headerRowHeight);
+      context.strokeStyle = exportBorder;
+      context.strokeRect(left, cursorY, dateColumnWidth, headerRowHeight);
+      context.fillStyle = "#FFFFFF";
+      context.font = `700 ${Math.round(14 * exportScale)}px Arial`;
+      context.fillText("Date", left + 16 * exportScale, cursorY + headerRowHeight / 2);
+
+      digitalLeadsExportTable.columns.forEach((column, index) => {
+        const cellX = left + dateColumnWidth + index * campaignColumnWidth;
+        context.fillStyle = exportPanelStrong;
+        context.fillRect(cellX, cursorY, campaignColumnWidth, headerRowHeight);
+        context.strokeStyle = exportBorder;
+        context.strokeRect(cellX, cursorY, campaignColumnWidth, headerRowHeight);
+        context.fillStyle = "#FFFFFF";
+        context.font = `700 ${Math.round(13 * exportScale)}px Arial`;
+        const lines = wrapCanvasText(
+          context,
+          column.label,
+          campaignColumnWidth - 20 * exportScale,
+        ).slice(0, 3);
+        const lineHeight = 15 * exportScale;
+        const textTop =
+          cursorY +
+          headerRowHeight / 2 -
+          ((lines.length - 1) * lineHeight) / 2;
+
+        lines.forEach((line, lineIndex) => {
+          context.fillText(
+            line,
+            cellX + 10 * exportScale,
+            textTop + lineIndex * lineHeight,
+          );
+        });
+      });
+
+      cursorY += headerRowHeight;
+
+      digitalLeadsExportTable.rows.forEach((row, rowIndex) => {
+        const rowY = cursorY + rowIndex * bodyRowHeight;
+        const fill = rowIndex % 2 === 0 ? exportRowEven : exportRowOdd;
+
+        context.fillStyle = fill;
+        context.fillRect(left, rowY, dateColumnWidth, bodyRowHeight);
+        context.strokeStyle = exportBorder;
+        context.strokeRect(left, rowY, dateColumnWidth, bodyRowHeight);
+        context.fillStyle = "#FFFFFF";
+        context.font = `600 ${Math.round(13 * exportScale)}px Arial`;
+        context.textAlign = "left";
+        context.fillText(
+          row.label,
+          left + 16 * exportScale,
+          rowY + bodyRowHeight / 2,
+        );
+
+        row.values.forEach((value, valueIndex) => {
+          const cellX = left + dateColumnWidth + valueIndex * campaignColumnWidth;
+          context.fillStyle = fill;
+          context.fillRect(cellX, rowY, campaignColumnWidth, bodyRowHeight);
+          context.strokeStyle = exportBorder;
+          context.strokeRect(cellX, rowY, campaignColumnWidth, bodyRowHeight);
+          context.fillStyle = "#FFFFFF";
+          context.font = `600 ${Math.round(13 * exportScale)}px Arial`;
+          context.textAlign = "center";
+          context.fillText(
+            value === 0 ? "-" : String(value),
+            cellX + campaignColumnWidth / 2,
+            rowY + bodyRowHeight / 2,
+          );
+        });
+      });
+
+      cursorY += digitalLeadsExportTable.rows.length * bodyRowHeight;
+
+      context.textAlign = "left";
+      context.fillStyle = exportPanelStrong;
+      context.fillRect(left, cursorY, dateColumnWidth, totalRowHeight);
+      context.strokeStyle = exportBorder;
+      context.strokeRect(left, cursorY, dateColumnWidth, totalRowHeight);
+      context.fillStyle = "#FFFFFF";
+      context.font = `700 ${Math.round(14 * exportScale)}px Arial`;
+      context.fillText(
+        "Total",
+        left + 16 * exportScale,
+        cursorY + totalRowHeight / 2,
+      );
+
+      digitalLeadsExportTable.totals.forEach((value, index) => {
+        const cellX = left + dateColumnWidth + index * campaignColumnWidth;
+        context.fillStyle = exportPanelStrong;
+        context.fillRect(cellX, cursorY, campaignColumnWidth, totalRowHeight);
+        context.strokeStyle = exportBorder;
+        context.strokeRect(cellX, cursorY, campaignColumnWidth, totalRowHeight);
+        context.fillStyle = "#FFFFFF";
+        context.font = `700 ${Math.round(14 * exportScale)}px Arial`;
+        context.textAlign = "center";
+        context.fillText(
+          value === 0 ? "-" : String(value),
+          cellX + campaignColumnWidth / 2,
+          cursorY + totalRowHeight / 2,
+        );
+      });
+
+      const link = document.createElement("a");
+      const fromKey = digitalLeadsExportTable.rows[0]?.dateKey ?? "range";
+      const toKey =
+        digitalLeadsExportTable.rows[digitalLeadsExportTable.rows.length - 1]?.dateKey ??
+        "range";
+
+      link.href = canvas.toDataURL("image/jpeg", 1);
+      link.download = `digital-leads-${brand}-${fromKey}-${toKey}.jpeg`;
+      link.click();
+    } finally {
+      setIsExportingDigitalLeads(false);
+    }
+  }
+
   async function handleLogout() {
     if (isLoggingOut) return;
 
@@ -1945,6 +2283,31 @@ export function DashboardClient({
                         <FileUp className="h-4 w-4" />
                       </Button>
                     ) : null}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={`absolute top-4 rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white lg:static lg:h-auto lg:w-auto lg:gap-2 lg:px-5 lg:py-1 ${
+                        brand === "redwing" ? "right-28 sm:right-36 md:right-44" : "right-16 sm:right-24 md:right-32"
+                      }`}
+                      onClick={handleExportDigitalLeadsImage}
+                      disabled={
+                        isExportingDigitalLeads ||
+                        showInitialWorkbookLoading ||
+                        digitalLeadsExportTable.columns.length === 0 ||
+                        digitalLeadsExportTable.rows.length === 0
+                      }
+                      aria-busy={isExportingDigitalLeads}
+                      aria-label="Export digital leads JPEG"
+                    >
+                      {isExportingDigitalLeads ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="hidden lg:inline">
+                        {isExportingDigitalLeads ? <Loader2 className="h-4 w-4 animate-spin" /> : "JPEG"}
+                      </span>
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
