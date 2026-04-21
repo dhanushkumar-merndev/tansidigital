@@ -118,37 +118,9 @@ export function getApprovalState(value: string) {
   return "pending";
 }
 
-export async function ensureApprovalSheetHeaders() {
-  const sheets = await getSheetsClient();
-  const spreadsheetId = getGoogleSheetId();
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: getApprovalHeaderRange(),
-  });
-  const existingHeaders = (response.data.values?.[0] ?? []).map((value) =>
-    normalizeCellValue(value),
-  );
-  const headersMatch =
-    existingHeaders.length === APPROVAL_HEADERS.length &&
-    existingHeaders.every((header, index) => header === APPROVAL_HEADERS[index]);
 
-  if (headersMatch) {
-    return;
-  }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: getApprovalHeaderRange(),
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [Array.from(APPROVAL_HEADERS)],
-    },
-  });
-}
 
 export async function readApprovalRows(): Promise<ApprovalSheetRow[]> {
-  await ensureApprovalSheetHeaders();
-
   const sheets = await getSheetsClient([
     "https://www.googleapis.com/auth/spreadsheets.readonly",
   ]);
