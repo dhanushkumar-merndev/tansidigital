@@ -215,16 +215,6 @@ function createReportImage(report: BrandReport, dateKey: string) {
   context.font = `700 ${Math.round(34 * scale)}px ${fontFamily}`;
   context.fillText("Digital Leads", left, cursorY + Math.round(34 * scale));
 
-  context.fillStyle = "rgba(255,255,255,0.72)";
-  context.font = `500 ${Math.round(17 * scale)}px ${fontFamily}`;
-  context.fillText(
-    report.fromDateKey && report.toDateKey
-      ? `${getBrandHeading(report.brand)} • ${formatIstDate(report.fromDateKey)} - ${formatIstDate(report.toDateKey)}`
-      : `${getBrandHeading(report.brand)} • ${formatIstDate(dateKey)}`,
-    left,
-    cursorY + Math.round(70 * scale),
-  );
-
   cursorY += titleHeight;
 
   const bigwingColumns = report.columns.filter((column) => column.brand === "bigwing");

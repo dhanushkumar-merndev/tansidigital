@@ -12,14 +12,7 @@ export type ApprovalSheetRow = {
 
 type SheetsClientScopes = string[];
 
-const APPROVAL_HEADERS = [
-  "session",
-  "allow",
-  "name",
-  "created_time",
-  "id",
-  "sent",
-] as const;
+
 
 function getGoogleSheetId() {
   const sheetId =
@@ -90,9 +83,7 @@ async function getSheetsClient(
   return google.sheets({ version: "v4", auth });
 }
 
-function getApprovalHeaderRange() {
-  return `${getGoogleSheetName()}!X1:AC1`;
-}
+
 
 function getApprovalDataRange() {
   return `${getGoogleSheetName()}!X2:AC`;
