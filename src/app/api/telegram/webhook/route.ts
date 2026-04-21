@@ -38,57 +38,100 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as TelegramWebhookUpdate | null;
   const callbackQuery = body?.callback_query;
 
-  if (!callbackQuery) {
-    return NextResponse.json({ ok: true });
-  }
+  try {
+    if (!callbackQuery) {
+      console.info("[telegram-webhook] Ignored update without callback_query.");
+      return NextResponse.json({ ok: true });
+    }
 
-  const parsed = parseCallbackData(callbackQuery.data);
-
-  if (!parsed) {
-    await answerCallbackQuery(callbackQuery.id, "Unsupported action.", true);
-    return NextResponse.json({ ok: true });
-  }
-
-  const row = await findRowByUserId(parsed.userId);
-
-  if (!row) {
-    await answerCallbackQuery(callbackQuery.id, "User row not found.", true);
-    return NextResponse.json({ ok: true });
-  }
-
-  const desiredAllow = parsed.action === "approve" ? "TRUE" : "FALSE";
-  const desiredState = parsed.action === "approve" ? "approved" : "blocked";
-  const currentState = getApprovalState(row.allow);
-
-  if (currentState === "pending") {
-    await updateAllowColumn(row.rowNumber, desiredAllow);
-    row.allow = desiredAllow;
-  }
-
-  const chatId = callbackQuery.message?.chat?.id;
-  const messageId = callbackQuery.message?.message_id;
-
-  await answerCallbackQuery(
-    callbackQuery.id,
-    currentState === "pending"
-      ? desiredState === "approved"
-        ? "Access approved."
-        : "Access rejected."
-      : currentState === "approved"
-        ? "Already approved."
-        : "Already rejected.",
-  );
-
-  if (typeof chatId !== "undefined" && typeof messageId === "number") {
-    await editApprovalMessage({
-      chatId,
-      createdTime: row.createdTime,
-      messageId,
-      name: row.name,
-      status: getApprovalState(row.allow) === "approved" ? "approved" : "rejected",
-      userId: row.id,
+    const parsed = parseCallbackData(callbackQuery.data);
+    console.info("[telegram-webhook] Received callback.", {
+      callbackData: callbackQuery.data ?? null,
+      callbackId: callbackQuery.id,
+      parsedAction: parsed?.action ?? null,
+      parsedUserId: parsed?.userId ?? null,
     });
-  }
 
-  return NextResponse.json({ ok: true });
+    if (!parsed) {
+      await answerCallbackQuery(callbackQuery.id, "Unsupported action.", true);
+      return NextResponse.json({ ok: true });
+    }
+
+    const row = await findRowByUserId(parsed.userId);
+    console.info("[telegram-webhook] Lookup result.", {
+      foundRow: Boolean(row),
+      rowAllow: row?.allow ?? null,
+      rowId: row?.id ?? null,
+      rowNumber: row?.rowNumber ?? null,
+      userId: parsed.userId,
+    });
+
+    if (!row) {
+      await answerCallbackQuery(callbackQuery.id, "User row not found.", true);
+      return NextResponse.json({ ok: true });
+    }
+
+    const desiredAllow = parsed.action === "approve" ? "TRUE" : "FALSE";
+    const desiredState = parsed.action === "approve" ? "approved" : "blocked";
+    const currentState = getApprovalState(row.allow);
+
+    if (currentState === "pending") {
+      await updateAllowColumn(row.rowNumber, desiredAllow);
+      row.allow = desiredAllow;
+      console.info("[telegram-webhook] Updated sheet row.", {
+        desiredAllow,
+        rowNumber: row.rowNumber,
+        userId: row.id,
+      });
+    } else {
+      console.info("[telegram-webhook] Row already resolved.", {
+        currentState,
+        rowNumber: row.rowNumber,
+        userId: row.id,
+      });
+    }
+
+    const chatId = callbackQuery.message?.chat?.id;
+    const messageId = callbackQuery.message?.message_id;
+
+    await answerCallbackQuery(
+      callbackQuery.id,
+      currentState === "pending"
+        ? desiredState === "approved"
+          ? "Access approved."
+          : "Access rejected."
+        : currentState === "approved"
+          ? "Already approved."
+          : "Already rejected.",
+    );
+
+    if (typeof chatId !== "undefined" && typeof messageId === "number") {
+      await editApprovalMessage({
+        chatId,
+        createdTime: row.createdTime,
+        messageId,
+        name: row.name,
+        status: getApprovalState(row.allow) === "approved" ? "approved" : "rejected",
+        userId: row.id,
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[telegram-webhook] Failed to process callback.", {
+      callbackData: callbackQuery?.data ?? null,
+      callbackId: callbackQuery?.id ?? null,
+      error: error instanceof Error ? error.message : error,
+    });
+
+    if (callbackQuery?.id) {
+      await answerCallbackQuery(
+        callbackQuery.id,
+        "Approval failed on server. Check deployment logs.",
+        true,
+      ).catch(() => null);
+    }
+
+    return NextResponse.json({ ok: true });
+  }
 }
