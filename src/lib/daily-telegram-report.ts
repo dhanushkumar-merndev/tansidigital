@@ -186,7 +186,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
   const scale = 2.2;
   const paddingX = Math.round(44 * scale);
   const paddingY = Math.round(38 * scale);
-  const titleHeight = Math.round(56 * scale);
+  const titleHeight = Math.round(64 * scale);
   const groupRowHeight = Math.round(42 * scale);
   const headerRowHeight = Math.round(64 * scale);
   const bodyRowHeight = Math.round(42 * scale);
@@ -358,7 +358,7 @@ function createReportImage(report: BrandReport, dateKey: string) {
     );
   });
 
-  return canvas.encode("jpeg", 100);
+  return canvas.encode("png");
 }
 
 export async function sendDailyTelegramReports() {
@@ -389,7 +389,7 @@ export async function sendDailyTelegramReports() {
         report.fromDateKey && report.toDateKey
           ? `${getBrandHeading(report.brand)} • ${formatIstDate(report.fromDateKey)} - ${formatIstDate(report.toDateKey)}`
           : getBrandHeading(report.brand),
-      filename: `digital-leads-${report.brand}-${report.fromDateKey ?? "report"}-${report.toDateKey ?? todayKey}.jpg`,
+      filename: `digital-leads-${report.brand}-${report.fromDateKey ?? "report"}-${report.toDateKey ?? todayKey}.png`,
     });
   }
 }

@@ -41,7 +41,7 @@ export function getTelegramDefaultChatId() {
   return getTelegramChatId();
 }
 
-function toBlobSafeJpegBytes(buffer: Uint8Array) {
+function toBlobSafeBytes(buffer: Uint8Array) {
   const copied = new Uint8Array(buffer.byteLength);
   copied.set(buffer);
   return copied;
@@ -92,7 +92,7 @@ export async function sendTelegramPhoto({
   chatId = getTelegramChatId(),
   filename,
 }: TelegramPhotoInput) {
-  const binary = toBlobSafeJpegBytes(buffer);
+  const binary = toBlobSafeBytes(buffer);
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   if (caption) {
@@ -100,8 +100,8 @@ export async function sendTelegramPhoto({
   }
   formData.append(
     "photo",
-    new Blob([binary], { type: "image/jpeg" }),
-    filename,
+    new Blob([binary], { type: filename?.endsWith(".png") ? "image/png" : "image/jpeg" }),
+    filename ?? "photo.jpg",
   );
 
   const response = await fetch(
@@ -127,7 +127,7 @@ export async function sendTelegramDocument({
   chatId = getTelegramChatId(),
   filename,
 }: TelegramPhotoInput) {
-  const binary = toBlobSafeJpegBytes(buffer);
+  const binary = toBlobSafeBytes(buffer);
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
   if (caption) {
@@ -135,7 +135,7 @@ export async function sendTelegramDocument({
   }
   formData.append(
     "document",
-    new Blob([binary], { type: "image/jpeg" }),
+    new Blob([binary], { type: filename?.endsWith(".png") ? "image/png" : "image/jpeg" }),
     filename,
   );
 
@@ -229,7 +229,19 @@ export async function editApprovalMessage(input: EditApprovalMessageInput) {
       message_id: input.messageId,
       text: buildResolvedMessageText(input),
       reply_markup: {
-        inline_keyboard: [],
+        inline_keyboard: [
+          [
+            input.status === "approved"
+              ? {
+                  text: "🔴 Invoke",
+                  callback_data: `reject:${input.userId}`,
+                }
+              : {
+                  text: "🟢 UnInvoke",
+                  callback_data: `approve:${input.userId}`,
+                },
+          ],
+        ],
       },
     });
   } catch (error) {

@@ -83,14 +83,17 @@ export async function POST(request: Request) {
     const desiredAllow = parsed.action === "approve" ? "TRUE" : "FALSE";
     const desiredState = parsed.action === "approve" ? "approved" : "blocked";
     const currentState = getApprovalState(row.allow);
+
     const callbackMessage =
       currentState === "pending"
         ? desiredState === "approved"
           ? "Access approved."
           : "Access rejected."
-        : currentState === "approved"
-          ? "Already approved."
-          : "Already rejected.";
+        : desiredState === currentState
+          ? `Already ${currentState === "approved" ? "approved" : "rejected"}.`
+          : desiredState === "approved"
+            ? "Access re-granted."
+            : "Access revoked.";
 
     try {
       await answerCallbackQuery(callbackQuery.id, callbackMessage);
@@ -105,16 +108,17 @@ export async function POST(request: Request) {
       });
     }
 
-    if (currentState === "pending") {
+    if (currentState !== desiredState) {
       await updateAllowColumn(row.rowNumber, desiredAllow);
       row.allow = desiredAllow;
       console.info("[telegram-webhook] Updated sheet row.", {
-        desiredAllow,
+        currentState,
+        desiredState,
         rowNumber: row.rowNumber,
         userId: row.id,
       });
     } else {
-      console.info("[telegram-webhook] Row already resolved.", {
+      console.info("[telegram-webhook] No change required.", {
         currentState,
         rowNumber: row.rowNumber,
         userId: row.id,
