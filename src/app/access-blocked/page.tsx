@@ -22,6 +22,10 @@ export default async function AccessBlockedPage({
     redirect("/access-blocked");
   }
 
+  if (authStatus.isAccessPending || browserAccessStatus.isAccessPending) {
+    redirect("/pending-approval");
+  }
+
   if (
     authStatus.isAuthenticated &&
     !authStatus.isAccessBlocked &&
@@ -43,11 +47,7 @@ export default async function AccessBlockedPage({
   }
 
   if (!authStatus.isAuthenticated && browserAccessStatus.accessState) {
-    return (
-      <AccessBlocked
-        state={browserAccessStatus.isAccessPending ? "pending" : "blocked"}
-      />
-    );
+    return <AccessBlocked state="blocked" />;
   }
 
   return <AccessBlocked state="blocked" />;

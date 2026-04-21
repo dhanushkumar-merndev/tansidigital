@@ -20,6 +20,7 @@ import {
   ChevronDown,
   CircleAlert,
   Clipboard,
+  Download,
   FileUp,
   IndianRupee,
   KeyRound,
@@ -80,6 +81,18 @@ type DashboardCard = {
   numericValue?: number;
   startingValue?: number;
   value: string;
+};
+
+type DigitalLeadsExportColumn = {
+  brand: "bigwing" | "redwing";
+  label: string;
+  tab: string;
+};
+
+type DigitalLeadsExportRow = {
+  dateKey: string;
+  label: string;
+  values: number[];
 };
 
 type CachedDashboardCard = Pick<

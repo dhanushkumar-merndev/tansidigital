@@ -240,9 +240,10 @@ const BROWSER_ACCESS_HEADERS = [
   "name",
   "created_time",
   "id",
+  "sent",
 ] as const;
-const BROWSER_ACCESS_HEADER_RANGE = `${DATA_SHEET_TITLE}!X1:AB1`;
-const BROWSER_ACCESS_DATA_RANGE = `${DATA_SHEET_TITLE}!X2:AB`;
+const BROWSER_ACCESS_HEADER_RANGE = `${DATA_SHEET_TITLE}!X1:AC1`;
+const BROWSER_ACCESS_DATA_RANGE = `${DATA_SHEET_TITLE}!X2:AC`;
 const BROWSER_ACCESS_CACHE_TTL_MS = 15_000;
 
 function normalizeHeader(value: string) {

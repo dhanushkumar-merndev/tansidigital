@@ -389,6 +389,16 @@ export async function getAuthAccessStatus(
     force: options?.forceAccessRefresh ?? false,
   });
 
+  if (!accessDecision.exists) {
+    return {
+      accessState: null,
+      browserId,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
+  }
+
   return {
     accessState: accessDecision.state,
     browserId,

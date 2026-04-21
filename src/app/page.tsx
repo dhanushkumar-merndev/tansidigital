@@ -50,7 +50,11 @@ export default async function Home({ searchParams }: PageProps) {
     return <PinLogin />;
   }
 
-  if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
+  if (authStatus.isAccessPending) {
+    redirect("/pending-approval");
+  }
+
+  if (authStatus.isAccessBlocked) {
     redirect("/access-blocked");
   }
 

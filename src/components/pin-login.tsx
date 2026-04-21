@@ -109,7 +109,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
       await saveBrowserProfile({ clientId: browserId, name: trimmedName }).catch(() => null);
       setIsSubmitting(false);
       startTransition(() => {
-        router.replace("/access-blocked");
+        router.replace(data.state === "pending" ? "/pending-approval" : "/access-blocked");
       });
       return;
     }

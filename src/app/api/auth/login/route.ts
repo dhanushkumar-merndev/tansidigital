@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { handleLoginApproval } from "@/lib/approval";
 import {
   buildPinFailureMessage,
   getBrowserAccessCookieName,
@@ -54,7 +55,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const accessDecision = await registerBrowserAccess(browserId, name);
+  await registerBrowserAccess(browserId, name);
+  const approvalResult = await handleLoginApproval(browserId);
   const token = createSessionToken();
   const baseCookie = {
     sameSite: "lax" as const,
@@ -62,20 +64,20 @@ export async function POST(request: Request) {
     path: "/",
   };
 
-  if (accessDecision.state !== "allowed") {
+  if (!approvalResult.approved) {
     const response = NextResponse.json(
       {
         ok: false,
-        state: accessDecision.state,
+        state: approvalResult.state === "blocked" ? "blocked" : "pending",
         error:
-          accessDecision.state === "pending"
+          approvalResult.state === "pending"
             ? "Access for this browser is pending approval."
             : "Access for this browser has been blocked.",
       },
       { status: 403 },
     );
 
-    if (accessDecision.state === "pending" && token) {
+    if (approvalResult.state === "pending" && token) {
       response.cookies.set({
         name: getSessionCookieName(),
         value: token,
