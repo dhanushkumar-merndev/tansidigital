@@ -7,6 +7,8 @@ import * as React from "react";
 import { useTransition } from "react";
 import { useWebHaptics } from "web-haptics/react";
 
+import { getBrowserProfile, saveBrowserProfile } from "@/lib/browser-profile";
+
 const KEYPAD_ROWS = [
   ["1", "2", "3"],
   ["4", "5", "6"],
@@ -23,18 +25,54 @@ type PinLoginProps = {
 };
 
 type KeypadValue = (typeof KEYPAD_ROWS)[number][number];
+type LoginStage = "pin" | "name";
 
 export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLoginProps) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const { trigger } = useWebHaptics();
+  const [browserId, setBrowserId] = React.useState("");
+  const [isProfileReady, setIsProfileReady] = React.useState(false);
+  const [loginStage, setLoginStage] = React.useState<LoginStage>("pin");
+  const [name, setName] = React.useState("");
   const [pin, setPin] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState("");
 
+  React.useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const profile = await getBrowserProfile();
+        if (!active) return;
+
+        setBrowserId(profile.clientId);
+        setName(profile.name);
+      } catch {
+        if (!active) return;
+      } finally {
+        if (active) {
+          setIsProfileReady(true);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function submitPin() {
-    if (pin.length !== length || isSubmitting) {
+    if (pin.length !== length || isSubmitting || !isProfileReady) {
       await trigger(PIN_HEAVY_HAPTIC_PRESET);
+      return;
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setLoginStage("name");
+      setError("");
       return;
     }
 
@@ -47,25 +85,40 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({
+        browserId,
+        name: trimmedName,
+        pin,
+      }),
     });
     const data = (await response.json().catch(() => null)) as
-      | { error?: string; ok?: boolean }
+      | { error?: string; ok?: boolean; state?: "blocked" | "pending" }
       | null;
 
-    if (!response.ok) {
-      setPin("");
-      setIsSubmitting(false);
-      setError(data?.error ?? "Wrong PIN. Try again.");
+    if (response.ok) {
+      await saveBrowserProfile({ clientId: browserId, name: trimmedName }).catch(() => null);
       await trigger(PIN_HEAVY_HAPTIC_PRESET);
+      await trigger(PIN_HEAVY_HAPTIC_PRESET); // Double tap feeling for success
+      startTransition(() => {
+        router.refresh();
+      });
       return;
     }
 
+    if (response.status === 403 && data?.state) {
+      await saveBrowserProfile({ clientId: browserId, name: trimmedName }).catch(() => null);
+      setIsSubmitting(false);
+      startTransition(() => {
+        router.replace("/access-blocked");
+      });
+      return;
+    }
+
+    setPin("");
+    setLoginStage("pin");
+    setIsSubmitting(false);
+    setError(data?.error ?? "Wrong PIN. Try again.");
     await trigger(PIN_HEAVY_HAPTIC_PRESET);
-    await trigger(PIN_HEAVY_HAPTIC_PRESET); // Double tap feeling for success
-    startTransition(() => {
-      router.refresh();
-    });
   }
 
   async function handlePress(value: KeypadValue) {
@@ -97,7 +150,6 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
     });
 
     await trigger(PIN_HEAVY_HAPTIC_PRESET);
-    
   }
 
   return (
@@ -115,7 +167,7 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
 
       <div className="crm-touch-scroll relative z-10 flex h-full items-center justify-center overflow-y-auto px-5 py-4 sm:px-6 sm:py-6">
         <motion.div
-          initial={{ opacity: 0, y: 18 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           className={`crm-gpu-layer ${PIN_LOGIN_ROUNDED_CLASS} flex w-full max-w-[380px] flex-col justify-center border border-white/12 bg-white/6 px-4 py-5 text-white backdrop-blur-xl sm:px-5 sm:py-6`}
         >
@@ -130,11 +182,11 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
           </div>
 
           <div className="relative overflow-hidden">
-            <AnimatePresence mode="wait">
+            <AnimatePresence initial={false} mode="wait">
               {isSubmitting || isPending ? (
                 <motion.div
                   key="loading"
-                  initial={{ opacity: 0 }}
+                  initial={false}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   className="flex flex-col items-center justify-center py-12"
@@ -174,10 +226,102 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                     />
                   </div>
                 </motion.div>
+              ) : loginStage === "name" ? (
+                <motion.div
+                  key="name"
+                  initial={false}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <div className={`${PIN_LOGIN_ROUNDED_CLASS} mb-6 border border-white/12 bg-white/8 px-5 py-6`}>
+                    <div className="text-center">
+                      <p className="text-[11px] uppercase tracking-[0.28em] text-white/46">
+                        One-time browser setup
+                      </p>
+                      <h2 className="mt-3 text-xl font-semibold text-white">
+                        Save your access name
+                      </h2>
+                      <p className="mt-2 text-sm leading-6 text-white/62">
+                        This name is stored once on this browser as <span className="font-medium text-white/82">name_digital</span> and reused next time.
+                      </p>
+                    </div>
+
+                    <div className="mt-5 space-y-3">
+                      <label className="block text-left text-xs uppercase tracking-[0.24em] text-white/46">
+                        Your name
+                      </label>
+                      <input
+                        type="text"
+                        autoFocus
+                        value={name}
+                        maxLength={120}
+                        onChange={(event) => {
+                          setName(event.target.value);
+                          if (error) {
+                            setError("");
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void submitPin();
+                          }
+                        }}
+                        placeholder="Enter your name"
+                        className={`${PIN_LOGIN_ROUNDED_CLASS} h-14 w-full border border-white/14 bg-white/10 px-4 text-base text-white outline-none placeholder:text-white/34`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginStage("pin");
+                        setError("");
+                      }}
+                      className={`${PIN_LOGIN_ROUNDED_CLASS} flex h-[60px] w-full items-center justify-center border border-white/14 bg-white/8 text-sm font-medium text-white/72 transition hover:bg-white/12 hover:text-white`}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void submitPin()}
+                      className={`${PIN_LOGIN_ROUNDED_CLASS} flex h-[60px] w-full items-center justify-center gap-2 border border-white/14 bg-white/16 text-sm font-medium text-white transition hover:bg-white/22`}
+                    >
+                      Continue
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <AnimatePresence mode="wait">
+                    {error ? (
+                      <motion.p
+                        key={error}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        className="mt-4 text-center text-sm text-[#ffd3d3]"
+                      >
+                        {error}
+                      </motion.p>
+                    ) : (
+                      <motion.p
+                        key="name-hint"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="mt-4 text-center text-sm text-white/54"
+                      >
+                        You&apos;ll only be asked once on this browser.
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
               ) : (
                 <motion.div
                   key="keypad"
-                  initial={{ opacity: 0 }}
+                  initial={false}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                 >
@@ -258,7 +402,9 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
                         exit={{ opacity: 0 }}
                         className="mt-4 text-center text-sm text-white/54"
                       >
-                        Tap digits, then press enter.
+                        {isProfileReady
+                          ? "Tap digits, then press enter."
+                          : "Preparing secure browser access..."}
                       </motion.p>
                     )}
                   </AnimatePresence>

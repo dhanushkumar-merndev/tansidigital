@@ -1,9 +1,10 @@
 
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
 import { DashboardClient } from "@/components/dashboard-client";
 import { PinLogin } from "@/components/pin-login";
-import { isAuthenticated } from "@/lib/auth";
+import { getAuthAccessStatus } from "@/lib/auth";
 import { getBrandAssets, normalizeBrand } from "@/lib/brands";
 import { getDashboardData } from "@/lib/sheets";
 
@@ -44,10 +45,18 @@ export default async function Home({ searchParams }: PageProps) {
   const initialBrand = normalizeBrand(
     Array.isArray(params.brand) ? params.brand[0] : params.brand,
   );
-  const authenticated = await isAuthenticated();
+  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
 
-  if (!authenticated) {
+  if (!authStatus.isAuthenticated) {
     return <PinLogin />;
+  }
+
+  if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
+    redirect(
+      authStatus.isAccessPending
+        ? "/access-blocked?state=pending"
+        : "/access-blocked?state=blocked",
+    );
   }
 
   const workbook = await getDashboardData();

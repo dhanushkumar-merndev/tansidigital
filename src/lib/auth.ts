@@ -3,8 +3,12 @@ import { promises as fs } from "fs";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import path from "path";
 
+import { getBrowserAccessDecision } from "@/lib/sheets";
+
 const SESSION_COOKIE = "dashboard_session";
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
+const BROWSER_ACCESS_COOKIE = "dashboard_browser_id";
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+const BROWSER_ACCESS_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const PIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const PIN_RATE_LIMIT_BLOCK_MS = 24 * 60 * 60 * 1000;
 const PIN_RATE_LIMIT_SOURCE_PATH = path.join(process.cwd(), "data", "pin-rate-limits.json");
@@ -40,6 +44,21 @@ export type PinRateLimitStatus = {
   isBlocked: boolean;
   remainingAttempts: number;
   retryAfterSeconds: number;
+};
+
+export type AuthAccessStatus = {
+  accessState: "allowed" | "blocked" | "pending" | null;
+  browserId: string | null;
+  isAccessBlocked: boolean;
+  isAccessPending: boolean;
+  isAuthenticated: boolean;
+};
+
+export type BrowserAccessStatus = {
+  accessState: "allowed" | "blocked" | "pending" | null;
+  browserId: string | null;
+  isAccessBlocked: boolean;
+  isAccessPending: boolean;
 };
 
 function getDashboardPassword() {
@@ -268,41 +287,142 @@ export function verifyDigitalPin(pin: string) {
 }
 
 export async function isAuthenticated() {
+  const status = await getAuthAccessStatus();
+  return status.isAuthenticated && !status.isAccessBlocked && !status.isAccessPending;
+}
+
+export async function getAuthAccessStatus(
+  options?: { forceAccessRefresh?: boolean },
+): Promise<AuthAccessStatus> {
   const cookieStore = await cookies();
   const session = cookieStore.get(SESSION_COOKIE)?.value;
 
   if (!session) {
-    return false;
+    return {
+      accessState: null,
+      browserId: cookieStore.get(BROWSER_ACCESS_COOKIE)?.value?.trim() || null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
   }
 
   const [nonce, issuedAtRaw, signature] = session.split(".");
   if (!nonce || !issuedAtRaw || !signature) {
-    return false;
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
   }
 
   const issuedAt = Number.parseInt(issuedAtRaw, 10);
   if (!Number.isFinite(issuedAt)) {
-    return false;
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
   }
 
   const now = Math.floor(Date.now() / 1000);
   if (now - issuedAt > SESSION_MAX_AGE_SECONDS) {
-    return false;
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
   }
 
   const expectedSignature = signSessionPayload(`${nonce}.${issuedAtRaw}`);
   if (!expectedSignature) {
-    return false;
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
   }
 
   const expected = toBuffer(expectedSignature);
   const candidate = toBuffer(signature);
 
   if (expected.length !== candidate.length) {
-    return false;
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
   }
 
-  return timingSafeEqual(expected, candidate);
+  if (!timingSafeEqual(expected, candidate)) {
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: false,
+    };
+  }
+
+  const browserId = cookieStore.get(BROWSER_ACCESS_COOKIE)?.value?.trim() || null;
+  if (!browserId) {
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+      isAuthenticated: true,
+    };
+  }
+
+  const accessDecision = await getBrowserAccessDecision(browserId, {
+    force: options?.forceAccessRefresh ?? false,
+  });
+
+  return {
+    accessState: accessDecision.state,
+    browserId,
+    isAccessBlocked: accessDecision.exists && accessDecision.state === "blocked",
+    isAccessPending: accessDecision.exists && accessDecision.state === "pending",
+    isAuthenticated: true,
+  };
+}
+
+export async function getBrowserAccessStatus(
+  options?: { forceAccessRefresh?: boolean },
+): Promise<BrowserAccessStatus> {
+  const cookieStore = await cookies();
+  const browserId = cookieStore.get(BROWSER_ACCESS_COOKIE)?.value?.trim() || null;
+
+  if (!browserId) {
+    return {
+      accessState: null,
+      browserId: null,
+      isAccessBlocked: false,
+      isAccessPending: false,
+    };
+  }
+
+  const accessDecision = await getBrowserAccessDecision(browserId, {
+    force: options?.forceAccessRefresh ?? false,
+  });
+
+  return {
+    accessState: accessDecision.exists ? accessDecision.state : null,
+    browserId,
+    isAccessBlocked: accessDecision.exists && accessDecision.state === "blocked",
+    isAccessPending: accessDecision.exists && accessDecision.state === "pending",
+  };
 }
 
 export function getSessionCookieName() {
@@ -311,4 +431,12 @@ export function getSessionCookieName() {
 
 export function getSessionMaxAgeSeconds() {
   return SESSION_MAX_AGE_SECONDS;
+}
+
+export function getBrowserAccessCookieName() {
+  return BROWSER_ACCESS_COOKIE;
+}
+
+export function getBrowserAccessMaxAgeSeconds() {
+  return BROWSER_ACCESS_MAX_AGE_SECONDS;
 }

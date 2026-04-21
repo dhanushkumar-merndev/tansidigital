@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isAuthenticated } from "@/lib/auth";
+import { getAuthAccessStatus } from "@/lib/auth";
 import { fetchMetaCampaignSpend, isMetaInsightsConfigured } from "@/lib/meta";
 
 type SpendBody = {
@@ -149,8 +149,20 @@ function findBestCampaignMatch(
 }
 
 export async function POST(request: Request) {
-  if (!(await isAuthenticated())) {
+  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+
+  if (!authStatus.isAuthenticated) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
+  if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: authStatus.isAccessPending ? "Access pending approval." : "Access blocked.",
+      },
+      { status: 403 },
+    );
   }
 
   const body = (await request.json().catch(() => null)) as SpendBody | null;

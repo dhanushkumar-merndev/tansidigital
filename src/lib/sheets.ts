@@ -133,6 +133,15 @@ export type DigitalLeadImportMeta = {
   prompt: string;
 };
 
+export type BrowserAccessDecision = {
+  allow: boolean;
+  createdAt: string | null;
+  exists: boolean;
+  name: string;
+  session: string;
+  state: "allowed" | "blocked" | "pending";
+};
+
 export type DashboardNamedCount = {
   name: string;
   value: number;
@@ -225,6 +234,16 @@ const DIGITAL_DATA_HEADERS = [
 ] as const;
 const DIGITAL_DATA_HEADER_RANGE = `${DATA_SHEET_TITLE}!F1:N1`;
 const DIGITAL_DATA_APPEND_RANGE = `${DATA_SHEET_TITLE}!F:N`;
+const BROWSER_ACCESS_HEADERS = [
+  "session",
+  "allow",
+  "name",
+  "created_time",
+  "id",
+] as const;
+const BROWSER_ACCESS_HEADER_RANGE = `${DATA_SHEET_TITLE}!X1:AB1`;
+const BROWSER_ACCESS_DATA_RANGE = `${DATA_SHEET_TITLE}!X2:AB`;
+const BROWSER_ACCESS_CACHE_TTL_MS = 15_000;
 
 function normalizeHeader(value: string) {
   return value
@@ -2212,6 +2231,9 @@ let _cachedCountSignature = "";
 let _cachedCountByTab = new Map<string, number>();
 let _countCheckTimestamp = 0;
 let _countCheckPromise: Promise<LeadCountState> | null = null;
+let _browserAccessCacheTimestamp = 0;
+let _browserAccessCache = new Map<string, BrowserAccessDecision>();
+let _browserAccessInflightPromise: Promise<Map<string, BrowserAccessDecision>> | null = null;
 
 function buildLeadCountState(countByTab: Map<string, number>): LeadCountState {
   const signature = Array.from(countByTab.entries())
@@ -2522,6 +2544,12 @@ function clearDashboardCacheState() {
   _dashboardInflightPromise = null;
 }
 
+function clearBrowserAccessCacheState() {
+  _browserAccessCacheTimestamp = 0;
+  _browserAccessCache = new Map();
+  _browserAccessInflightPromise = null;
+}
+
 async function ensureWorkbookStoreReady(options?: { verifyFreshness?: boolean }) {
   const verifyFreshness = options?.verifyFreshness ?? true;
   await ensureWorkbookDatabaseDirectory();
@@ -2784,6 +2812,53 @@ function normalizeDigitalMetric(value: unknown) {
   return 0;
 }
 
+function normalizeBrowserAccessState(value: string | undefined): BrowserAccessDecision["state"] {
+  const normalized = value?.trim().toLowerCase() ?? "";
+
+  if (["true", "1", "yes", "allow", "allowed"].includes(normalized)) {
+    return "allowed";
+  }
+
+  if (["false", "0", "no", "blocked", "deny", "denied"].includes(normalized)) {
+    return "blocked";
+  }
+
+  return "pending";
+}
+
+function normalizeBrowserAccessName(value: string | undefined) {
+  return typeof value === "string" ? value.trim().slice(0, 120) : "";
+}
+
+function normalizeBrowserAccessSession(value: string | undefined) {
+  return typeof value === "string" ? value.trim().slice(0, 200) : "";
+}
+
+function findBrowserAccessRowIndex(rows: string[][], session: string) {
+  return rows.findIndex((row) => {
+    const sessionCell = normalizeBrowserAccessSession(String(row[0] ?? ""));
+    const idCell = normalizeBrowserAccessSession(String(row[4] ?? ""));
+
+    return sessionCell === session || idCell === session;
+  });
+}
+
+function createBrowserAccessDecision(
+  session: string,
+  input?: Partial<BrowserAccessDecision>,
+): BrowserAccessDecision {
+  const state = input?.state ?? "pending";
+
+  return {
+    allow: input?.allow ?? state === "allowed",
+    createdAt: input?.createdAt ?? null,
+    exists: input?.exists ?? false,
+    name: input?.name ?? "",
+    session,
+    state,
+  };
+}
+
 function normalizeDigitalDate(value: unknown) {
   if (typeof value !== "string") {
     throw new Error("Each entry needs a date in YYYY-MM-DD format.");
@@ -2857,6 +2932,289 @@ export async function getDigitalLeadImportMeta(): Promise<DigitalLeadImportMeta>
     lastImportedDate,
     prompt: buildDigitalLeadPrompt(lastImportedDate),
   };
+}
+
+async function ensureBrowserAccessHeaders() {
+  const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
+  const spreadsheetId = getSpreadsheetId();
+  const headerResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: BROWSER_ACCESS_HEADER_RANGE,
+  });
+  const existingHeaders = (headerResponse.data.values?.[0] ?? []).map((value) =>
+    String(value).trim(),
+  );
+  const expectedHeaders = [...BROWSER_ACCESS_HEADERS];
+  const headersMatch =
+    existingHeaders.length === expectedHeaders.length &&
+    existingHeaders.every((header, index) => header === expectedHeaders[index]);
+
+  if (!headersMatch) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: BROWSER_ACCESS_HEADER_RANGE,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [expectedHeaders],
+      },
+    });
+  }
+}
+
+async function getNextBrowserAccessRow() {
+  const sheets = await getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: BROWSER_ACCESS_DATA_RANGE,
+    majorDimension: "ROWS",
+  });
+  const rows = response.data.values ?? [];
+  let lastUsedRow = 1;
+
+  rows.forEach((row, index) => {
+    if (row.some((value) => String(value ?? "").trim() !== "")) {
+      lastUsedRow = index + 2;
+    }
+  });
+
+  return lastUsedRow + 1;
+}
+
+async function getDataSheetId() {
+  const sheets = await getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))",
+  });
+  const dataSheet = spreadsheet.data.sheets?.find(
+    (sheet) => sheet.properties?.title?.trim().toUpperCase() === DATA_SHEET_TITLE,
+  );
+  const sheetId = dataSheet?.properties?.sheetId;
+
+  if (typeof sheetId !== "number") {
+    throw new Error(`Unable to find ${DATA_SHEET_TITLE} sheet.`);
+  }
+
+  return sheetId;
+}
+
+async function fetchBrowserAccessMapInternal() {
+  const sheets = await getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: BROWSER_ACCESS_DATA_RANGE,
+    majorDimension: "ROWS",
+  });
+  const rows = response.data.values ?? [];
+  const decisionBySession = new Map<string, BrowserAccessDecision>();
+
+  rows.forEach((row) => {
+    const session = normalizeBrowserAccessSession(String(row[0] ?? ""));
+    if (!session) {
+      return;
+    }
+
+    decisionBySession.set(
+      session,
+      createBrowserAccessDecision(session, {
+        state: normalizeBrowserAccessState(String(row[1] ?? "")),
+        createdAt: String(row[3] ?? "").trim() || null,
+        exists: true,
+        name: normalizeBrowserAccessName(String(row[2] ?? "")),
+      }),
+    );
+  });
+
+  return decisionBySession;
+}
+
+async function getBrowserAccessMap(force = false) {
+  const now = Date.now();
+
+  if (!force && now - _browserAccessCacheTimestamp < BROWSER_ACCESS_CACHE_TTL_MS) {
+    return new Map(_browserAccessCache);
+  }
+
+  if (_browserAccessInflightPromise) {
+    return _browserAccessInflightPromise;
+  }
+
+  _browserAccessInflightPromise = fetchBrowserAccessMapInternal()
+    .then((decisionBySession) => {
+      _browserAccessCache = new Map(decisionBySession);
+      _browserAccessCacheTimestamp = Date.now();
+      _browserAccessInflightPromise = null;
+      return new Map(decisionBySession);
+    })
+    .catch((error) => {
+      _browserAccessInflightPromise = null;
+      throw error;
+    });
+
+  return _browserAccessInflightPromise;
+}
+
+export async function getBrowserAccessDecision(
+  session: string,
+  options?: { force?: boolean },
+): Promise<BrowserAccessDecision> {
+  const normalizedSession = normalizeBrowserAccessSession(session);
+  if (!normalizedSession) {
+    return createBrowserAccessDecision("");
+  }
+
+  try {
+    const accessMap = await getBrowserAccessMap(options?.force ?? false);
+    return (
+      accessMap.get(normalizedSession) ??
+      createBrowserAccessDecision(normalizedSession)
+    );
+  } catch {
+    // Fail open if the access-control sheet is temporarily unavailable.
+    return createBrowserAccessDecision(normalizedSession);
+  }
+}
+
+export async function registerBrowserAccess(
+  session: string,
+  name: string,
+): Promise<BrowserAccessDecision> {
+  const normalizedSession = normalizeBrowserAccessSession(session);
+  const normalizedName = normalizeBrowserAccessName(name);
+
+  if (!normalizedSession) {
+    throw new Error("A browser session id is required.");
+  }
+
+  if (!normalizedName) {
+    throw new Error("A browser name is required.");
+  }
+
+  await ensureBrowserAccessHeaders();
+  const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
+  const spreadsheetId = getSpreadsheetId();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: BROWSER_ACCESS_DATA_RANGE,
+    majorDimension: "ROWS",
+  });
+  const rows = response.data.values ?? [];
+  const existingIndex = findBrowserAccessRowIndex(rows, normalizedSession);
+
+  if (existingIndex >= 0) {
+    const existingRow = rows[existingIndex] ?? [];
+    const state = normalizeBrowserAccessState(String(existingRow[1] ?? ""));
+    const existingName = normalizeBrowserAccessName(String(existingRow[2] ?? ""));
+    const createdAt = String(existingRow[3] ?? "").trim() || null;
+    const existingId = normalizeBrowserAccessSession(String(existingRow[4] ?? ""));
+    const rowNumber = existingIndex + 2;
+
+    if (!existingName && normalizedName) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${DATA_SHEET_TITLE}!Z${rowNumber}`,
+        valueInputOption: "RAW",
+        requestBody: {
+          values: [[normalizedName]],
+        },
+      });
+    }
+
+    if (!existingId) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${DATA_SHEET_TITLE}!AB${rowNumber}`,
+        valueInputOption: "RAW",
+        requestBody: {
+          values: [[normalizedSession]],
+        },
+      });
+    }
+
+    clearBrowserAccessCacheState();
+
+    return createBrowserAccessDecision(normalizedSession, {
+      createdAt,
+      exists: true,
+      name: existingName || normalizedName,
+      state,
+    });
+  }
+
+  const createdAt = new Date().toISOString();
+  const initialState: BrowserAccessDecision["state"] = "pending";
+
+  const nextRow = await getNextBrowserAccessRow();
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${DATA_SHEET_TITLE}!X${nextRow}:AB${nextRow}`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[normalizedSession, "PENDING", normalizedName, createdAt, normalizedSession]],
+    },
+  });
+
+  clearBrowserAccessCacheState();
+
+  return createBrowserAccessDecision(normalizedSession, {
+    createdAt,
+    exists: true,
+    name: normalizedName,
+    state: initialState,
+  });
+}
+
+export async function removeBrowserAccess(session: string) {
+  const normalizedSession = normalizeBrowserAccessSession(session);
+  if (!normalizedSession) {
+    return;
+  }
+
+  await ensureBrowserAccessHeaders();
+  const sheets = await getSheetsClient(["https://www.googleapis.com/auth/spreadsheets"]);
+  const spreadsheetId = getSpreadsheetId();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: BROWSER_ACCESS_DATA_RANGE,
+    majorDimension: "ROWS",
+  });
+  const rows = response.data.values ?? [];
+  const existingIndex = rows.findIndex(
+    (row) => normalizeBrowserAccessSession(String(row[0] ?? "")) === normalizedSession,
+  );
+
+  if (existingIndex === -1) {
+    return;
+  }
+
+  const rowNumber = existingIndex + 2;
+  const sheetId = await getDataSheetId();
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteRange: {
+            range: {
+              endColumnIndex: 27,
+              endRowIndex: rowNumber,
+              sheetId,
+              startColumnIndex: 23,
+              startRowIndex: rowNumber - 1,
+            },
+            shiftDimension: "ROWS",
+          },
+        },
+      ],
+    },
+  });
+
+  clearBrowserAccessCacheState();
 }
 
 async function ensureDataSheetHeaders() {

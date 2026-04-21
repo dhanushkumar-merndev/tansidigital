@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 
-import { isAuthenticated } from "@/lib/auth";
+import { getAuthAccessStatus } from "@/lib/auth";
 import { refreshWorkbookData } from "@/lib/sheets";
 
 export async function POST() {
-  if (!(await isAuthenticated())) {
+  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+
+  if (!authStatus.isAuthenticated) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
+  if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: authStatus.isAccessPending ? "Access pending approval." : "Access blocked.",
+      },
+      { status: 403 },
+    );
   }
 
   const workbook = await refreshWorkbookData();

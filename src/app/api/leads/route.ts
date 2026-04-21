@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isAuthenticated } from "@/lib/auth";
+import { getAuthAccessStatus } from "@/lib/auth";
 import { normalizeBrand, type ConcreteBrand } from "@/lib/brands";
 import { getLeadsPageData, type LeadsPageQuery } from "@/lib/sheets";
 
@@ -24,8 +24,20 @@ function normalizePage(value: string | null | undefined) {
 }
 
 export async function GET(request: Request) {
-  if (!(await isAuthenticated())) {
+  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
+
+  if (!authStatus.isAuthenticated) {
     return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
+  if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: authStatus.isAccessPending ? "Access pending approval." : "Access blocked.",
+      },
+      { status: 403 },
+    );
   }
 
   const url = new URL(request.url);

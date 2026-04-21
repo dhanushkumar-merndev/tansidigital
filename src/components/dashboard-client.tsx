@@ -579,6 +579,7 @@ export function DashboardClient({
 }: DashboardClientProps) {
   const [isPending, startTransition] = useTransition();
   const [isBrandPending, startBrandTransition] = useTransition();
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isMounted, setIsMounted] = React.useState(false);
   const [isDesktop, setIsDesktop] = React.useState(false);
   const [brand, setBrand] = React.useState<Brand>(initialBrand);
@@ -1332,10 +1333,18 @@ export function DashboardClient({
   );
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
-    startTransition(() => {
-      router.refresh();
-    });
+    if (isLoggingOut) return;
+
+    setIsLoggingOut(true);
+
+    try {
+      await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+      startTransition(() => {
+        router.refresh();
+      });
+    } finally {
+      setIsLoggingOut(false);
+    }
   }
 
   function handleBrandChange(nextBrand: Brand) {
@@ -1566,9 +1575,17 @@ export function DashboardClient({
                       size="icon"
                       className="absolute top-4 right-4 rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white lg:static lg:h-auto lg:w-auto lg:gap-2 lg:px-5 lg:py-1"
                       onClick={handleLogout}
+                      disabled={isLoggingOut}
+                      aria-busy={isLoggingOut}
                     >
-                      <LogOut className="h-4 w-4" />
-                      <span className="hidden lg:inline">Logout</span>
+                      {isLoggingOut ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <LogOut className="h-4 w-4" />
+                      )}
+                      <span className="hidden lg:inline">
+                        {isLoggingOut ? "Logging out..." : "Logout"}
+                      </span>
                     </Button>
                   </div>
                 </div>
@@ -1615,7 +1632,7 @@ export function DashboardClient({
             </section>
           ) : null}
 
-          <section className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+          <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             {dashboardCards.map((card) => (
               <DashboardStatCard key={card.label} card={card} />
             ))}

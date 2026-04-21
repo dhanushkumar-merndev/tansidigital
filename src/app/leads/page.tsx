@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
 import { LeadsPageClient } from "@/components/leads-page-client";
 import { PinLogin } from "@/components/pin-login";
-import { isAuthenticated } from "@/lib/auth";
+import { getAuthAccessStatus } from "@/lib/auth";
 import { getBrandAssets, type ConcreteBrand, normalizeBrand } from "@/lib/brands";
 import { getLeadsPageData, type LeadsPageQuery } from "@/lib/sheets";
 
@@ -57,10 +58,18 @@ export default async function LeadsPage({ searchParams }: PageProps) {
   const initialBrand = normalizeLeadBrand(
     Array.isArray(params.brand) ? params.brand[0] : params.brand,
   );
-  const authenticated = await isAuthenticated();
+  const authStatus = await getAuthAccessStatus({ forceAccessRefresh: true });
 
-  if (!authenticated) {
+  if (!authStatus.isAuthenticated) {
     return <PinLogin />;
+  }
+
+  if (authStatus.isAccessBlocked || authStatus.isAccessPending) {
+    redirect(
+      authStatus.isAccessPending
+        ? "/access-blocked?state=pending"
+        : "/access-blocked?state=blocked",
+    );
   }
 
   const initialQuery: LeadsPageQuery = {

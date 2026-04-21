@@ -237,6 +237,17 @@ svg:focus {
   }
 }
 
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body {
+    overscroll-behavior-y: auto;
+  }
+
+  .crm-touch-scroll {
+    touch-action: auto;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
