@@ -110,7 +110,10 @@ function buildBrandReport(
 ): BrandReport {
   const relevantTabs =
     brand === "all"
-      ? dashboard.tabs
+      ? [
+          ...dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === "bigwing"),
+          ...dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === "redwing"),
+        ]
       : dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === brand);
   const columns = relevantTabs.map((tab) => ({
     brand: dashboard.tabBrandLookup[tab] === "bigwing" ? ("bigwing" as const) : ("redwing" as const),
@@ -169,7 +172,7 @@ function wrapCanvasText(
   return lines;
 }
 
-function createReportImage(report: BrandReport, dateKey: string) {
+function createReportImage(report: BrandReport) {
   const fontFamily = getReportFontFamily();
   const isBigwingTheme = report.brand === "bigwing";
   const background = isBigwingTheme ? "#050505" : "#0D4D8B";
@@ -384,7 +387,7 @@ export async function sendDailyTelegramReports() {
 
   for (const report of reports) {
     await sendTelegramDocument({
-      buffer: await createReportImage(report, todayKey),
+      buffer: await createReportImage(report),
       caption:
         report.fromDateKey && report.toDateKey
           ? `${getBrandHeading(report.brand)} • ${formatIstDate(report.fromDateKey)} - ${formatIstDate(report.toDateKey)}`

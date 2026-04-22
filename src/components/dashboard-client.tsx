@@ -1043,7 +1043,8 @@ export function DashboardClient({
   );
 
   const digitalLeadsExportTable = React.useMemo(() => {
-    const exportColumns: DigitalLeadsExportColumn[] = selectedTabs.map((tab) => ({
+    const orderedExportTabs = [...selectedBigwingTabs, ...selectedRedwingTabs];
+    const exportColumns: DigitalLeadsExportColumn[] = orderedExportTabs.map((tab) => ({
       brand: tabBrandLookup[tab] === "bigwing" ? "bigwing" : "redwing",
       label: workbook.tabLabels?.[tab] || tab,
       tab,
@@ -1091,7 +1092,8 @@ export function DashboardClient({
     dateRange?.from,
     dateRange?.to,
     filteredDashboardSummaries,
-    selectedTabs,
+    selectedBigwingTabs,
+    selectedRedwingTabs,
     tabBrandLookup,
     workbook.tabLabels,
   ]);
