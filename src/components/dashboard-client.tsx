@@ -72,6 +72,7 @@ type MetaSpendSummary = {
 };
 
 type DashboardCard = {
+  ariaLabel?: string;
   animate?: boolean;
   currency?: string;
   format?: "compact" | "currency";
@@ -80,6 +81,7 @@ type DashboardCard = {
   isRefreshing?: boolean;
   label: string;
   numericValue?: number;
+  onClick?: () => void;
   startingValue?: number;
   value: string;
 };
@@ -108,6 +110,8 @@ type DashboardStatCacheBucket = Record<
 
 type DashboardStatCacheStore = Partial<Record<Brand, DashboardStatCacheBucket>>;
 
+type MetaCampaignModalTab = "taking" | "missing";
+
 type TimelineDatum = {
   bigwingLeads: number;
   date: string;
@@ -130,7 +134,7 @@ type PlatformDatum = {
 };
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
-const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), 3, 1);
+const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 const DASHBOARD_STAT_CACHE_KEY = "crm_dashboard_stat_cache_v1";
 const DASHBOARD_STAT_CACHE_WRITE_INTERVAL_MS = 5_000;
 const META_SPEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
@@ -250,8 +254,8 @@ const DashboardStatCard = React.memo(function DashboardStatCard({
 }: {
   card: DashboardCard;
 }) {
-  return (
-    <div className="crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4">
+  const content = (
+    <>
       <div className="mb-2 flex items-center justify-between sm:mb-4">
         <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
           {card.label}
@@ -283,6 +287,31 @@ const DashboardStatCard = React.memo(function DashboardStatCard({
       <p className="mt-1 text-[10px] leading-none text-white/54 sm:mt-2 sm:text-sm sm:leading-normal">
         {card.hint}
       </p>
+    </>
+  );
+
+  const className = `crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4 ${
+    card.onClick
+      ? "w-full text-left text-white transition hover:border-white/28 hover:bg-white/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
+      : ""
+  }`;
+
+  if (card.onClick) {
+    return (
+      <button
+        type="button"
+        onClick={card.onClick}
+        className={className}
+        aria-label={card.ariaLabel ?? `Open ${card.label} details`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {content}
     </div>
   );
 });
@@ -812,6 +841,9 @@ export function DashboardClient({
     to: new Date(),
   }));
   const [isDigitalModalOpen, setIsDigitalModalOpen] = React.useState(false);
+  const [isMetaCampaignModalOpen, setIsMetaCampaignModalOpen] = React.useState(false);
+  const [metaCampaignModalTab, setMetaCampaignModalTab] =
+    React.useState<MetaCampaignModalTab>("taking");
   const [digitalPin, setDigitalPin] = React.useState("");
   const [isDigitalPinVerified, setIsDigitalPinVerified] = React.useState(false);
   const [isDigitalLoading, setIsDigitalLoading] = React.useState(false);
@@ -874,7 +906,7 @@ export function DashboardClient({
   }, [brand]);
 
   React.useEffect(() => {
-    if (isDigitalModalOpen) {
+    if (isDigitalModalOpen || isMetaCampaignModalOpen) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "unset";
@@ -883,7 +915,22 @@ export function DashboardClient({
     return () => {
       document.body.style.overflow = "unset";
     };
-  }, [isDigitalModalOpen]);
+  }, [isDigitalModalOpen, isMetaCampaignModalOpen]);
+
+  React.useEffect(() => {
+    if (!isMetaCampaignModalOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMetaCampaignModalOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isMetaCampaignModalOpen]);
 
   React.useEffect(() => {
     const interval = setInterval(() => {
@@ -1295,7 +1342,18 @@ export function DashboardClient({
     showInitialWorkbookLoading,
   ]);
 
-  const matchedCampaigns = metaSpend?.campaigns ?? [];
+  const matchedCampaigns = React.useMemo(
+    () => metaSpend?.campaigns ?? [],
+    [metaSpend?.campaigns],
+  );
+  const matchedCampaignNameSet = React.useMemo(
+    () => new Set(matchedCampaigns.map((campaign) => campaign.name)),
+    [matchedCampaigns],
+  );
+  const missingMetaCampaignTabs = React.useMemo(
+    () => selectedTabs.filter((tab) => !matchedCampaignNameSet.has(tab)),
+    [matchedCampaignNameSet, selectedTabs],
+  );
   const metaCpcTotal = matchedCampaigns.reduce(
     (total, campaign) => total + campaign.cpc,
     0,
@@ -1329,20 +1387,21 @@ export function DashboardClient({
       return "Add API";
     }
 
-    const matchedCampaignSet = new Set((metaSpend.campaigns ?? []).map((c) => c.name));
-    const unmatched = selectedTabs.filter((tab) => !matchedCampaignSet.has(tab));
+    if (selectedTabs.length === 0) {
+      return "No campaigns selected.";
+    }
 
-    let hint = `${metaSpend.matchedCampaigns} matched campaign${
+    const hint = `${metaSpend.matchedCampaigns} matched campaign${
       metaSpend.matchedCampaigns === 1 ? "" : "s"
     } from Meta`;
 
-    if (unmatched.length > 0 && unmatched.length < selectedTabs.length) {
-      const unmatchedLabels = unmatched.map(tab => workbook.tabLabels?.[tab] || tab);
-      hint += ` (Missing: ${unmatchedLabels.join(", ")})`;
-    }
-
     return hint;
-  }, [isMetaSpendLoading, metaSpend, metaSpendError, selectedTabs, workbook.tabLabels]);
+  }, [
+    isMetaSpendLoading,
+    metaSpend,
+    metaSpendError,
+    selectedTabs.length
+  ]);
 
   const metaCpcHint = React.useMemo(() => {
     if (isMetaSpendLoading && !metaSpend) {
@@ -1397,6 +1456,7 @@ export function DashboardClient({
         value: formatCompactNumber(selectedTabs.length),
       },
       {
+        ariaLabel: "Open Meta campaign spend details",
         currency: metaSpend?.currency,
         format: metaSpend?.configured ? "currency" : undefined,
         hint: metaCostHint,
@@ -1404,6 +1464,10 @@ export function DashboardClient({
         isRefreshing: isMetaSpendLoading,
         label: "Cost Spent",
         numericValue: metaSpend?.configured ? metaSpend.totalSpend : undefined,
+        onClick: () => {
+          setMetaCampaignModalTab("taking");
+          setIsMetaCampaignModalOpen(true);
+        },
         value: metaCostValue,
       },
       {
@@ -2737,6 +2801,146 @@ export function DashboardClient({
                     No digital performance rows found in the selected date range.
                   </div>
                 )}
+              </div>
+            </div>
+          ) : null}
+
+          {isMetaCampaignModalOpen ? (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-sm"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setIsMetaCampaignModalOpen(false);
+                }
+              }}
+            >
+              <div className="flex max-h-[88vh] w-full max-w-2xl flex-col crm-surface-radius border border-white/14 bg-[#103a64]/95 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.4)] backdrop-blur-2xl sm:p-7">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-1 text-[11px] uppercase tracking-[0.26em] text-white/65">
+                      <IndianRupee className="h-3.5 w-3.5" />
+                      Meta Campaigns
+                    </div>
+                    <h2 className="mt-3 text-2xl font-semibold">Cost Spent Details</h2>
+                    <p className="mt-1 text-sm text-white/68">
+                      Campaigns matched from Meta for the selected date range.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsMetaCampaignModalOpen(false)}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/8 text-white/82 transition hover:bg-white/12 hover:text-white"
+                    aria-label="Close Meta campaign modal"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mb-4 grid grid-cols-2 gap-2 rounded-[22px] border border-white/12 bg-white/8 p-1">
+                  {([
+                    ["taking", `Taking (${matchedCampaigns.length})`],
+                    ["missing", `Missing (${missingMetaCampaignTabs.length})`],
+                  ] as const).map(([tab, label]) => {
+                    const active = metaCampaignModalTab === tab;
+
+                    return (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setMetaCampaignModalTab(tab)}
+                        className={
+                          active
+                            ? "rounded-[17px] bg-white px-4 py-2.5 text-sm font-semibold text-[#103a64] shadow-[0_10px_28px_rgba(0,0,0,0.14)]"
+                            : "rounded-[17px] px-4 py-2.5 text-sm font-medium text-white/72 transition hover:bg-white/10 hover:text-white"
+                        }
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div
+                  className="custom-scrollbar min-h-[260px] max-h-[430px] overflow-y-auto pr-1"
+                  data-lenis-prevent
+                  data-lenis-prevent-touch
+                  data-lenis-prevent-wheel
+                >
+                  {isMetaSpendLoading && !metaSpend ? (
+                    <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-white/12 bg-white/8 px-4 text-center text-sm text-white/68">
+                      Fetching live Meta cost
+                    </div>
+                  ) : metaSpendError ? (
+                    <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-[#ffe7b0]/18 bg-[#ffe7b0]/8 px-4 text-center text-sm text-[#ffe7b0]">
+                      {metaSpendError}
+                    </div>
+                  ) : !metaSpend?.configured ? (
+                    <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-white/12 bg-white/8 px-4 text-center text-sm text-white/68">
+                      Add API
+                    </div>
+                  ) : metaCampaignModalTab === "taking" ? (
+                    matchedCampaigns.length > 0 ? (
+                      <div className="space-y-2">
+                        {matchedCampaigns.map((campaign) => (
+                          <div
+                            key={campaign.name}
+                            className="rounded-[22px] border border-white/12 bg-white/8 p-4"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-white">
+                                  {workbook.tabLabels?.[campaign.name] || campaign.name}
+                                </p>
+                                <p className="mt-1 text-xs text-white/52">
+                                  Included in Meta spend total
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-base font-semibold tabular-nums text-white">
+                                  {formatCurrencyAmount(campaign.spend, campaign.currency)}
+                                </p>
+                                <p className="mt-1 text-xs text-white/58">
+                                  CPC {formatCurrencyAmount(campaign.cpc, campaign.currency)}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-white/12 bg-white/8 px-4 text-center text-sm text-white/68">
+                        No Meta campaigns matched
+                      </div>
+                    )
+                  ) : missingMetaCampaignTabs.length > 0 ? (
+                    <div className="space-y-2">
+                      {missingMetaCampaignTabs.map((tab) => (
+                        <div
+                          key={tab}
+                          className="rounded-[22px] border border-[#ffe7b0]/18 bg-[#ffe7b0]/8 p-4"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-[#fff6d9]">
+                                {workbook.tabLabels?.[tab] || tab}
+                              </p>
+                              <p className="mt-1 text-xs text-[#ffe7b0]/72">
+                                Selected in this view but no Meta match
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-[#ffe7b0]/22 bg-[#ffe7b0]/10 px-3 py-1 text-xs font-medium text-[#ffe7b0]">
+                              Missing
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-white/12 bg-white/8 px-4 text-center text-sm text-white/68">
+                      No missing campaigns
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}

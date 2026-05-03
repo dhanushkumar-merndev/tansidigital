@@ -121,14 +121,36 @@ function buildBrandReport(
     tab,
   }));
   const todayKey = getIstDateKey(new Date());
-  const summaries = [...dashboard.dailySummaries]
-    .filter((summary) => summary.date !== todayKey)
-    .sort((left, right) => left.date.localeCompare(right.date));
-  const rows = summaries.map((summary) => ({
-    dateKey: summary.date,
-    label: formatExportDateLabel(summary.date),
-    values: columns.map((column) => summary.leadCountsByTab[column.tab] ?? 0),
-  }));
+  const currentMonthPrefix = todayKey.substring(0, 8); // "YYYY-MM-"
+
+  // Build a lookup of existing summaries for this month
+  const summariesByDate = new Map(
+    dashboard.dailySummaries
+      .filter((summary) => summary.date.startsWith(currentMonthPrefix) && summary.date !== todayKey)
+      .map((summary) => [summary.date, summary] as const),
+  );
+
+  // Generate ALL date keys from the 1st of the month to yesterday
+  const allDateKeys: string[] = [];
+  const istYear = Number(todayKey.substring(0, 4));
+  const istMonth = Number(todayKey.substring(5, 7)) - 1; // 0-indexed
+  const cursor = new Date(istYear, istMonth, 1);
+
+  while (true) {
+    const cursorKey = getIstDateKey(cursor);
+    if (cursorKey >= todayKey) break;
+    allDateKeys.push(cursorKey);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const rows = allDateKeys.map((dateKey) => {
+    const summary = summariesByDate.get(dateKey);
+    return {
+      dateKey,
+      label: formatExportDateLabel(dateKey),
+      values: columns.map((column) => summary?.leadCountsByTab[column.tab] ?? 0),
+    };
+  });
   const totals = columns.map((_, columnIndex) =>
     rows.reduce((total, row) => total + (row.values[columnIndex] ?? 0), 0),
   );
