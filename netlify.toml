@@ -1,2 +1,2 @@
 [functions."send-daily-telegram-report"]
-schedule = "30 12 * * *"
+schedule = "30 4 * * *"
