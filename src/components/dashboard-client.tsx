@@ -1090,7 +1090,13 @@ export function DashboardClient({
   );
 
   const digitalLeadsExportTable = React.useMemo(() => {
-    const orderedExportTabs = [...selectedBigwingTabs, ...selectedRedwingTabs];
+    const takingCampaignTabs =
+      metaSpend?.configured && metaSpend.campaigns.length > 0
+        ? new Set(metaSpend.campaigns.map((campaign) => campaign.name))
+        : null;
+    const orderedExportTabs = [...selectedBigwingTabs, ...selectedRedwingTabs].filter(
+      (tab) => !takingCampaignTabs || takingCampaignTabs.has(tab),
+    );
     const exportColumns: DigitalLeadsExportColumn[] = orderedExportTabs.map((tab) => ({
       brand: tabBrandLookup[tab] === "bigwing" ? "bigwing" : "redwing",
       label: workbook.tabLabels?.[tab] || tab,
@@ -1139,6 +1145,8 @@ export function DashboardClient({
     dateRange?.from,
     dateRange?.to,
     filteredDashboardSummaries,
+    metaSpend?.campaigns,
+    metaSpend?.configured,
     selectedBigwingTabs,
     selectedRedwingTabs,
     tabBrandLookup,
@@ -1969,8 +1977,8 @@ export function DashboardClient({
 
       let groupStartX = left + dateColumnWidth;
       const brandGroups = [
-        { columns: bigwingColumns, label: "Bigwing" },
-        { columns: redwingColumns, label: "Redwing" },
+        { columns: bigwingColumns, label: "BigWing" },
+        { columns: redwingColumns, label: "RedWing" },
       ].filter((group) => group.columns.length > 0);
 
       for (const group of brandGroups) {

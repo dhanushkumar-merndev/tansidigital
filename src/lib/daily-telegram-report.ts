@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { GlobalFonts, createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 
 import { BRAND_CONFIG, type Brand } from "./brands";
+import { fetchMetaCampaignSpend, isMetaInsightsConfigured } from "./meta";
 import { getDashboardData } from "./sheets";
 import { sendTelegramDocument, sendTelegramTextMessage } from "./telegram";
 
@@ -23,6 +24,11 @@ type BrandReport = {
   totalLeads: number;
   fromDateKey: string | null;
   toDateKey: string | null;
+};
+
+type RequestedCampaign = {
+  aliasKeys: string[];
+  key: string;
 };
 
 const REPORT_FONT_FAMILY = "Digital Leads Report Sans";
@@ -104,9 +110,136 @@ function getBrandHeading(brand: Brand) {
   return BRAND_CONFIG[brand].label;
 }
 
+function normalizeCampaignKey(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildRequestedCampaigns(
+  dashboard: Awaited<ReturnType<typeof getDashboardData>>,
+) {
+  const requestedCampaigns: RequestedCampaign[] = [];
+  const seen = new Set<string>();
+
+  for (const tab of dashboard.tabs) {
+    const aliases = Array.from(
+      new Set([tab, ...(dashboard.campaignAliasesByTab[tab] ?? [])]),
+    );
+    const aliasKeys = aliases.map((alias) => normalizeCampaignKey(alias)).filter(Boolean);
+    const key = normalizeCampaignKey(tab);
+
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    requestedCampaigns.push({ aliasKeys, key });
+  }
+
+  return requestedCampaigns;
+}
+
+function findBestCampaignMatch(
+  requestedCampaigns: RequestedCampaign[],
+  campaignName: string,
+) {
+  const normalizedCampaignName = normalizeCampaignKey(campaignName);
+  const exactMatch = requestedCampaigns.find((campaign) =>
+    campaign.aliasKeys.includes(normalizedCampaignName),
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const cleanedCampaignName = normalizedCampaignName
+    .replace(/[-_:.\|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const cleanedExactMatch = requestedCampaigns.find((campaign) =>
+    campaign.aliasKeys.some((alias) => {
+      const cleanedAlias = alias
+        .replace(/[-_:.\|]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return cleanedAlias === cleanedCampaignName;
+    }),
+  );
+
+  if (cleanedExactMatch) {
+    return cleanedExactMatch;
+  }
+
+  return requestedCampaigns
+    .filter((campaign) =>
+      campaign.aliasKeys.some(
+        (aliasKey) =>
+          normalizedCampaignName.includes(aliasKey) ||
+          aliasKey.includes(normalizedCampaignName),
+      ),
+    )
+    .sort((left, right) => {
+      const longestLeft = Math.max(...left.aliasKeys.map((key) => key.length));
+      const longestRight = Math.max(...right.aliasKeys.map((key) => key.length));
+      return longestRight - longestLeft;
+    })[0] ?? null;
+}
+
+function getCurrentMonthReportDateKeys() {
+  const todayKey = getIstDateKey(new Date());
+  const allDateKeys: string[] = [];
+  const istYear = Number(todayKey.substring(0, 4));
+  const istMonth = Number(todayKey.substring(5, 7)) - 1;
+  const cursor = new Date(istYear, istMonth, 1);
+
+  while (true) {
+    const cursorKey = getIstDateKey(cursor);
+    if (cursorKey >= todayKey) break;
+    allDateKeys.push(cursorKey);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return allDateKeys;
+}
+
+async function getTakingCampaignTabs(
+  dashboard: Awaited<ReturnType<typeof getDashboardData>>,
+  fromDateKey: string | null,
+  toDateKey: string | null,
+) {
+  if (!fromDateKey || !toDateKey || !isMetaInsightsConfigured()) {
+    return null;
+  }
+
+  const requestedCampaigns = buildRequestedCampaigns(dashboard);
+  const spendRows = await fetchMetaCampaignSpend({
+    from: fromDateKey,
+    to: toDateKey,
+  });
+  const takingCampaignTabs = new Set<string>();
+
+  for (const row of spendRows) {
+    if (!row.campaignName) {
+      continue;
+    }
+
+    const matchedCampaign = findBestCampaignMatch(
+      requestedCampaigns,
+      row.campaignName,
+    );
+
+    if (matchedCampaign) {
+      takingCampaignTabs.add(matchedCampaign.key);
+    }
+  }
+
+  return takingCampaignTabs;
+}
+
 function buildBrandReport(
   brand: Brand,
   dashboard: Awaited<ReturnType<typeof getDashboardData>>,
+  takingCampaignTabs: Set<string> | null,
+  reportDateKeys: string[],
 ): BrandReport {
   const relevantTabs =
     brand === "all"
@@ -115,7 +248,10 @@ function buildBrandReport(
           ...dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === "redwing"),
         ]
       : dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === brand);
-  const columns = relevantTabs.map((tab) => ({
+  const exportTabs = relevantTabs.filter(
+    (tab) => !takingCampaignTabs || takingCampaignTabs.has(normalizeCampaignKey(tab)),
+  );
+  const columns = exportTabs.map((tab) => ({
     brand: dashboard.tabBrandLookup[tab] === "bigwing" ? ("bigwing" as const) : ("redwing" as const),
     label: dashboard.tabLabels[tab] || tab,
     tab,
@@ -130,20 +266,7 @@ function buildBrandReport(
       .map((summary) => [summary.date, summary] as const),
   );
 
-  // Generate ALL date keys from the 1st of the month to yesterday
-  const allDateKeys: string[] = [];
-  const istYear = Number(todayKey.substring(0, 4));
-  const istMonth = Number(todayKey.substring(5, 7)) - 1; // 0-indexed
-  const cursor = new Date(istYear, istMonth, 1);
-
-  while (true) {
-    const cursorKey = getIstDateKey(cursor);
-    if (cursorKey >= todayKey) break;
-    allDateKeys.push(cursorKey);
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  const rows = allDateKeys.map((dateKey) => {
+  const rows = reportDateKeys.map((dateKey) => {
     const summary = summariesByDate.get(dateKey);
     return {
       dateKey,
@@ -250,8 +373,8 @@ function createReportImage(report: BrandReport) {
 
   let groupStartX = left + dateColumnWidth;
   const brandGroups = [
-    { columns: bigwingColumns, label: "Bigwing" },
-    { columns: redwingColumns, label: "Redwing" },
+    { columns: bigwingColumns, label: "BigWing" },
+    { columns: redwingColumns, label: "RedWing" },
   ].filter((group) => group.columns.length > 0);
 
   for (const group of brandGroups) {
@@ -389,6 +512,7 @@ function createReportImage(report: BrandReport) {
 export async function sendDailyTelegramReports() {
   const dashboard = await getDashboardData();
   const todayKey = getIstDateKey(new Date());
+  const reportDateKeys = getCurrentMonthReportDateKeys();
   const hasHistoricalRows = dashboard.dailySummaries.some((summary) => summary.date !== todayKey);
 
   if (!hasHistoricalRows) {
@@ -401,10 +525,15 @@ export async function sendDailyTelegramReports() {
     return;
   }
 
+  const takingCampaignTabs = await getTakingCampaignTabs(
+    dashboard,
+    reportDateKeys[0] ?? null,
+    reportDateKeys[reportDateKeys.length - 1] ?? null,
+  );
   const reports = [
-    buildBrandReport("all", dashboard),
-    buildBrandReport("bigwing", dashboard),
-    buildBrandReport("redwing", dashboard),
+    buildBrandReport("all", dashboard, takingCampaignTabs, reportDateKeys),
+    buildBrandReport("bigwing", dashboard, takingCampaignTabs, reportDateKeys),
+    buildBrandReport("redwing", dashboard, takingCampaignTabs, reportDateKeys),
   ];
 
   for (const report of reports) {
