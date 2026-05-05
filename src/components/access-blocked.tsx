@@ -2,6 +2,8 @@
 
 import { ShieldAlert } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import * as React from "react";
 
 type AccessBlockedProps = {
   state?: "blocked" | "pending";
@@ -9,6 +11,21 @@ type AccessBlockedProps = {
 
 export function AccessBlocked({ state = "blocked" }: AccessBlockedProps) {
   const isPending = state === "pending";
+  const router = useRouter();
+
+  React.useEffect(() => {
+    if (!isPending) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      router.refresh();
+    }, 10_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isPending, router]);
 
   return (
     <div className="relative isolate flex min-h-dvh items-center justify-center overflow-hidden bg-[#0D4D8B] px-5 py-8 text-white">

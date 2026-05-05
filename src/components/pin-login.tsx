@@ -16,6 +16,7 @@ const KEYPAD_ROWS = [
   ["delete", "0", "submit"],
 ] as const;
 
+const LOGIN_TIMEOUT_MS = 20_000;
 const PIN_LOGIN_ROUNDED_CLASS = "rounded-[28px]";
 const PIN_HEAVY_HAPTIC_PRESET = "heavy";
 
@@ -80,17 +81,32 @@ export function PinLogin({ length = 6, title = "Enter Dashboard PIN" }: PinLogin
     setError("");
     await trigger(PIN_HEAVY_HAPTIC_PRESET);
 
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        browserId,
-        name: trimmedName,
-        pin,
-      }),
-    });
+    const abortController = new AbortController();
+    const timeoutId = window.setTimeout(() => abortController.abort(), LOGIN_TIMEOUT_MS);
+    let response: Response;
+
+    try {
+      response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          browserId,
+          name: trimmedName,
+          pin,
+        }),
+        signal: abortController.signal,
+      });
+    } catch {
+      setIsSubmitting(false);
+      setError("Login is taking too long. Check internet/server connection and try again.");
+      await trigger(PIN_HEAVY_HAPTIC_PRESET);
+      return;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+
     const data = (await response.json().catch(() => null)) as
       | { error?: string; ok?: boolean; state?: "blocked" | "pending" }
       | null;

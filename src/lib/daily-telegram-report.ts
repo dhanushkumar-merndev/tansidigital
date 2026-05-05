@@ -334,11 +334,12 @@ function createReportImage(report: BrandReport) {
   const scale = 2.2;
   const paddingX = Math.round(44 * scale);
   const paddingY = Math.round(38 * scale);
-  const titleHeight = Math.round(64 * scale);
+  const titleHeight = Math.round(56 * scale);
   const groupRowHeight = Math.round(42 * scale);
   const headerRowHeight = Math.round(64 * scale);
   const bodyRowHeight = Math.round(42 * scale);
   const totalRowHeight = Math.round(46 * scale);
+  const leadTotalRowHeight = totalRowHeight;
   const dateColumnWidth = Math.round(144 * scale);
   const campaignColumnWidth = Math.round(156 * scale);
   const tableWidth = dateColumnWidth + report.columns.length * campaignColumnWidth;
@@ -349,7 +350,8 @@ function createReportImage(report: BrandReport) {
     groupRowHeight +
     headerRowHeight +
     Math.max(report.rows.length, 1) * bodyRowHeight +
-    totalRowHeight;
+    totalRowHeight +
+    leadTotalRowHeight;
 
   const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
@@ -505,6 +507,54 @@ function createReportImage(report: BrandReport) {
       cursorY + totalRowHeight / 2,
     );
   });
+
+  cursorY += totalRowHeight;
+
+  const bigwingLeadTotal = report.totals.reduce(
+    (total, value, index) =>
+      report.columns[index]?.brand === "bigwing" ? total + value : total,
+    0,
+  );
+  const redwingLeadTotal = report.totals.reduce(
+    (total, value, index) =>
+      report.columns[index]?.brand === "redwing" ? total + value : total,
+    0,
+  );
+  const allLeadTotal = bigwingLeadTotal + redwingLeadTotal;
+
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = panelSoft;
+  context.fillRect(left, cursorY, dateColumnWidth, leadTotalRowHeight);
+  context.strokeStyle = border;
+  context.strokeRect(left, cursorY, dateColumnWidth, leadTotalRowHeight);
+  context.fillStyle = "#FFFFFF";
+  context.font = `700 ${Math.round(14 * scale)}px ${fontFamily}`;
+  context.fillText(
+    String(allLeadTotal),
+    left + dateColumnWidth / 2,
+    cursorY + leadTotalRowHeight / 2,
+  );
+
+  let leadTotalStartX = left + dateColumnWidth;
+  for (const group of brandGroups) {
+    const groupWidth = group.columns.length * campaignColumnWidth;
+    const groupTotal = group.label === "BigWing" ? bigwingLeadTotal : redwingLeadTotal;
+
+    context.fillStyle = panelSoft;
+    context.fillRect(leadTotalStartX, cursorY, groupWidth, leadTotalRowHeight);
+    context.strokeStyle = border;
+    context.strokeRect(leadTotalStartX, cursorY, groupWidth, leadTotalRowHeight);
+    context.textAlign = "center";
+    context.fillStyle = "#FFFFFF";
+    context.font = `700 ${Math.round(14 * scale)}px ${fontFamily}`;
+    context.fillText(
+      String(groupTotal),
+      leadTotalStartX + groupWidth / 2,
+      cursorY + leadTotalRowHeight / 2,
+    );
+    leadTotalStartX += groupWidth;
+  }
 
   return canvas.encode("png");
 }

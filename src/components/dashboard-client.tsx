@@ -1913,11 +1913,12 @@ export function DashboardClient({
       const exportScale = 1.4;
       const paddingX = 44 * exportScale;
       const paddingY = 38 * exportScale;
-      const titleHeight = 56 * exportScale;
+      const titleHeight = 48 * exportScale;
       const groupRowHeight = 42 * exportScale;
       const headerRowHeight = 64 * exportScale;
       const bodyRowHeight = 42 * exportScale;
       const totalRowHeight = 46 * exportScale;
+      const leadTotalRowHeight = totalRowHeight;
       const dateColumnWidth = 144 * exportScale;
       const campaignColumnWidth = 156 * exportScale;
       const tableWidth =
@@ -1930,7 +1931,8 @@ export function DashboardClient({
         groupRowHeight +
         headerRowHeight +
         digitalLeadsExportTable.rows.length * bodyRowHeight +
-        totalRowHeight;
+        totalRowHeight +
+        leadTotalRowHeight;
       const canvas = document.createElement("canvas");
       const pixelRatio = Math.max(window.devicePixelRatio || 1, 5);
 
@@ -1954,14 +1956,6 @@ export function DashboardClient({
       context.fillStyle = "#FFFFFF";
       context.font = `700 ${Math.round(28 * exportScale)}px Arial`;
       context.fillText("Digital Leads", left, cursorY + 26 * exportScale);
-
-      context.fillStyle = "rgba(255,255,255,0.72)";
-      context.font = `400 ${Math.round(13 * exportScale)}px Arial`;
-      context.fillText(
-        `${brand === "all" ? "All" : BRAND_CONFIG[brand].label} • ${digitalLeadsExportTable.rows.length} day${digitalLeadsExportTable.rows.length === 1 ? "" : "s"}`,
-        left,
-        cursorY + 48 * exportScale,
-      );
 
       cursorY += titleHeight;
 
@@ -2105,6 +2099,58 @@ export function DashboardClient({
           cursorY + totalRowHeight / 2,
         );
       });
+
+      cursorY += totalRowHeight;
+
+      const bigwingLeadTotal = digitalLeadsExportTable.totals.reduce(
+        (total, value, index) =>
+          digitalLeadsExportTable.columns[index]?.brand === "bigwing"
+            ? total + value
+            : total,
+        0,
+      );
+      const redwingLeadTotal = digitalLeadsExportTable.totals.reduce(
+        (total, value, index) =>
+          digitalLeadsExportTable.columns[index]?.brand === "redwing"
+            ? total + value
+            : total,
+        0,
+      );
+      const allLeadTotal = bigwingLeadTotal + redwingLeadTotal;
+
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillStyle = exportPanelSoft;
+      context.fillRect(left, cursorY, dateColumnWidth, leadTotalRowHeight);
+      context.strokeStyle = exportBorder;
+      context.strokeRect(left, cursorY, dateColumnWidth, leadTotalRowHeight);
+      context.fillStyle = "#FFFFFF";
+      context.font = `700 ${Math.round(14 * exportScale)}px Arial`;
+      context.fillText(
+        String(allLeadTotal),
+        left + dateColumnWidth / 2,
+        cursorY + leadTotalRowHeight / 2,
+      );
+
+      let leadTotalStartX = left + dateColumnWidth;
+      for (const group of brandGroups) {
+        const groupWidth = group.columns.length * campaignColumnWidth;
+        const groupTotal = group.label === "BigWing" ? bigwingLeadTotal : redwingLeadTotal;
+
+        context.fillStyle = exportPanelSoft;
+        context.fillRect(leadTotalStartX, cursorY, groupWidth, leadTotalRowHeight);
+        context.strokeStyle = exportBorder;
+        context.strokeRect(leadTotalStartX, cursorY, groupWidth, leadTotalRowHeight);
+        context.textAlign = "center";
+        context.fillStyle = "#FFFFFF";
+        context.font = `700 ${Math.round(14 * exportScale)}px Arial`;
+        context.fillText(
+          String(groupTotal),
+          leadTotalStartX + groupWidth / 2,
+          cursorY + leadTotalRowHeight / 2,
+        );
+        leadTotalStartX += groupWidth;
+      }
 
       const link = document.createElement("a");
       const fromKey = digitalLeadsExportTable.rows[0]?.dateKey ?? "range";

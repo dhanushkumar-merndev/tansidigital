@@ -14,78 +14,129 @@ import {
 } from "@/lib/auth";
 import { registerBrowserAccess } from "@/lib/sheets";
 
+const LOGIN_APPROVAL_TIMEOUT_MS = 18_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
+}
+
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as
-    | { browserId?: string; name?: string; pin?: string }
-    | null;
-  const pin = body?.pin?.trim() ?? "";
-  const browserId = body?.browserId?.trim() ?? "";
-  const name = body?.name?.trim() ?? "";
-  const rateLimitStatus = await getPinRateLimitStatus("dashboard", request);
+  try {
+    const body = (await request.json().catch(() => null)) as
+      | { browserId?: string; name?: string; pin?: string }
+      | null;
+    const pin = body?.pin?.trim() ?? "";
+    const browserId = body?.browserId?.trim() ?? "";
+    const name = body?.name?.trim() ?? "";
+    const rateLimitStatus = await getPinRateLimitStatus("dashboard", request);
 
-  if (rateLimitStatus.isBlocked) {
-    return NextResponse.json(
-      { ok: false, error: buildPinFailureMessage("PIN", rateLimitStatus) },
-      { status: 429 },
+    if (rateLimitStatus.isBlocked) {
+      return NextResponse.json(
+        { ok: false, error: buildPinFailureMessage("PIN", rateLimitStatus) },
+        { status: 429 },
+      );
+    }
+
+    if (!verifyPin(pin)) {
+      const failureStatus = await registerPinAttempt("dashboard", request, false);
+
+      return NextResponse.json(
+        { ok: false, error: buildPinFailureMessage("PIN", failureStatus) },
+        { status: failureStatus.isBlocked ? 429 : 401 },
+      );
+    }
+
+    await registerPinAttempt("dashboard", request, true);
+
+    if (!browserId) {
+      return NextResponse.json(
+        { ok: false, error: "Browser access id is required." },
+        { status: 400 },
+      );
+    }
+
+    if (!name) {
+      return NextResponse.json(
+        { ok: false, error: "Your name is required for first-time access." },
+        { status: 400 },
+      );
+    }
+
+    await withTimeout(
+      registerBrowserAccess(browserId, name),
+      LOGIN_APPROVAL_TIMEOUT_MS,
+      "Timed out while registering browser approval.",
     );
-  }
-
-  if (!verifyPin(pin)) {
-    const failureStatus = await registerPinAttempt("dashboard", request, false);
-
-    return NextResponse.json(
-      { ok: false, error: buildPinFailureMessage("PIN", failureStatus) },
-      { status: failureStatus.isBlocked ? 429 : 401 },
+    const approvalResult = await withTimeout(
+      handleLoginApproval(browserId),
+      LOGIN_APPROVAL_TIMEOUT_MS,
+      "Timed out while checking approval status.",
     );
-  }
+    const token = createSessionToken();
+    const baseCookie = {
+      sameSite: "lax" as const,
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+    };
 
-  await registerPinAttempt("dashboard", request, true);
+    if (!approvalResult.approved) {
+      const response = NextResponse.json(
+        {
+          ok: false,
+          state: approvalResult.state === "blocked" ? "blocked" : "pending",
+          error:
+            approvalResult.state === "pending"
+              ? "Access for this browser is pending approval."
+              : "Access for this browser has been blocked.",
+        },
+        { status: 403 },
+      );
 
-  if (!browserId) {
-    return NextResponse.json(
-      { ok: false, error: "Browser access id is required." },
-      { status: 400 },
-    );
-  }
+      if (approvalResult.state === "pending" && token) {
+        response.cookies.set({
+          name: getSessionCookieName(),
+          value: token,
+          httpOnly: true,
+          maxAge: getSessionMaxAgeSeconds(),
+          ...baseCookie,
+        });
+      }
 
-  if (!name) {
-    return NextResponse.json(
-      { ok: false, error: "Your name is required for first-time access." },
-      { status: 400 },
-    );
-  }
-
-  await registerBrowserAccess(browserId, name);
-  const approvalResult = await handleLoginApproval(browserId);
-  const token = createSessionToken();
-  const baseCookie = {
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-  };
-
-  if (!approvalResult.approved) {
-    const response = NextResponse.json(
-      {
-        ok: false,
-        state: approvalResult.state === "blocked" ? "blocked" : "pending",
-        error:
-          approvalResult.state === "pending"
-            ? "Access for this browser is pending approval."
-            : "Access for this browser has been blocked.",
-      },
-      { status: 403 },
-    );
-
-    if (approvalResult.state === "pending" && token) {
       response.cookies.set({
-        name: getSessionCookieName(),
-        value: token,
+        name: getBrowserAccessCookieName(),
+        value: browserId,
         httpOnly: true,
-        maxAge: getSessionMaxAgeSeconds(),
+        maxAge: getBrowserAccessMaxAgeSeconds(),
         ...baseCookie,
       });
+
+      return response;
     }
+
+    if (!token) {
+      return NextResponse.json({ ok: false, error: "Auth is not configured on the server." }, { status: 500 });
+    }
+
+    const response = NextResponse.json({ ok: true });
+
+    response.cookies.set({
+      name: getSessionCookieName(),
+      value: token,
+      httpOnly: true,
+      maxAge: getSessionMaxAgeSeconds(),
+      ...baseCookie,
+    });
 
     response.cookies.set({
       name: getBrowserAccessCookieName(),
@@ -96,29 +147,17 @@ export async function POST(request: Request) {
     });
 
     return response;
+  } catch (error) {
+    console.error("[auth-login] Failed to verify approval.", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Could not verify approval right now. Please try again.",
+      },
+      { status: 503 },
+    );
   }
-
-  if (!token) {
-    return NextResponse.json({ ok: false, error: "Auth is not configured on the server." }, { status: 500 });
-  }
-
-  const response = NextResponse.json({ ok: true });
-
-  response.cookies.set({
-    name: getSessionCookieName(),
-    value: token,
-    httpOnly: true,
-    maxAge: getSessionMaxAgeSeconds(),
-    ...baseCookie,
-  });
-
-  response.cookies.set({
-    name: getBrowserAccessCookieName(),
-    value: browserId,
-    httpOnly: true,
-    maxAge: getBrowserAccessMaxAgeSeconds(),
-    ...baseCookie,
-  });
-
-  return response;
 }

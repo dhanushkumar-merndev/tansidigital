@@ -2042,30 +2042,23 @@ function normalizeRow(
 async function getSheetsClient(
   scopes: string[] = ["https://www.googleapis.com/auth/spreadsheets.readonly"],
 ) {
-  try {
-    // Using require instead of dynamic import is more stable for large CJS libraries in Next.js
-    const { google } = await import("googleapis");
-    
-    const email = process.env.GOOGLE_CLIENT_EMAIL;
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const email = process.env.GOOGLE_CLIENT_EMAIL?.trim();
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
-    if (!email || !privateKey) {
-      throw new Error("Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY in .env");
-    }
-
-    const auth = new google.auth.GoogleAuth({
-      credentials: {
-        client_email: email,
-        private_key: privateKey,
-      },
-      scopes,
-    });
-
-    return google.sheets({ version: "v4", auth });
-  } catch (error) {
-    console.error("Failed to initialize Google Sheets client:", error);
-    throw error;
+  if (!email || !privateKey) {
+    throw new Error("Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY in .env");
   }
+
+  const { google } = await import("googleapis");
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: email,
+      private_key: privateKey,
+    },
+    scopes,
+  });
+
+  return google.sheets({ version: "v4", auth });
 }
 
 interface GSheetsResponse {
