@@ -949,7 +949,6 @@ export function DashboardClient({
 
       try {
         const response = await fetch("/api/dashboard", {
-          cache: "no-store",
           method: "GET",
         });
         const data = (await response.json().catch(() => null)) as DashboardData | null;
@@ -1038,7 +1037,6 @@ export function DashboardClient({
     void (async () => {
       try {
         await fetch("/api/dashboard/refresh", {
-          cache: "no-store",
           method: "POST",
         });
       } finally {
