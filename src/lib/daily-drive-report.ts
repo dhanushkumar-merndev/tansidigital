@@ -182,10 +182,10 @@ async function uploadReportImage({
   };
 }
 
-async function resolveReportFolder() {
+async function resolveReportFolder(date = new Date()) {
   const drive = getDriveClient();
   const parentFolderId = getRequiredEnv("GOOGLE_DRIVE_FOLDER_ID");
-  const { filename, month, year } = getIstParts();
+  const { filename, month, year } = getIstParts(date);
   const yearFolderId = await getOrCreateFolder({
     drive,
     name: year,
@@ -205,17 +205,17 @@ async function resolveReportFolder() {
   };
 }
 
-export async function generateUploadAndNotifyDailyDriveReport() {
-  console.info("[daily-drive-report] Starting daily report upload.");
+export async function generateUploadAndNotifyDailyDriveReport(date = new Date(), notify = true) {
+  console.info(`[daily-drive-report] Starting daily report upload for ${date.toISOString()}.`);
 
   try {
-    const folder = await resolveReportFolder();
+    const folder = await resolveReportFolder(date);
     console.info("[daily-drive-report] Drive folder resolved.", {
       month: folder.month,
       year: folder.year,
     });
 
-    const buffer = await createCombinedDailyReportImage();
+    const buffer = await createCombinedDailyReportImage(date);
     console.info("[daily-drive-report] Combined report image generated.", {
       bytes: buffer.byteLength,
       filename: folder.filename,
@@ -231,16 +231,18 @@ export async function generateUploadAndNotifyDailyDriveReport() {
       filename: uploaded.filename,
     });
 
-    await sendTelegramTextMessageWithButton({
-      buttonText: "View",
-      text: [
-        "Daily report uploaded successfully.",
-        `File: ${uploaded.filename}`,
-        `Folder: ${folder.year}/${folder.month}`,
-      ].join("\n"),
-      url: uploaded.webViewLink,
-    });
-    console.info("[daily-drive-report] Telegram success notification sent.");
+    if (notify) {
+      await sendTelegramTextMessageWithButton({
+        buttonText: "View",
+        text: [
+          "Daily report uploaded successfully.",
+          `File: ${uploaded.filename}`,
+          `Folder: ${folder.year}/${folder.month}`,
+        ].join("\n"),
+        url: uploaded.webViewLink,
+      });
+      console.info("[daily-drive-report] Telegram success notification sent.");
+    }
 
     return uploaded;
   } catch (error) {
@@ -249,14 +251,16 @@ export async function generateUploadAndNotifyDailyDriveReport() {
       error: message,
     });
 
-    try {
-      await sendTelegramTextMessage(
-        ["Daily report upload failed.", `Error: ${message}`].join("\n"),
-      );
-    } catch (telegramError) {
-      console.error("[daily-drive-report] Failed to send Telegram failure notification.", {
-        error: telegramError instanceof Error ? telegramError.message : String(telegramError),
-      });
+    if (notify) {
+      try {
+        await sendTelegramTextMessage(
+          ["Daily report upload failed.", `Error: ${message}`].join("\n"),
+        );
+      } catch (telegramError) {
+        console.error("[daily-drive-report] Failed to send Telegram failure notification.", {
+          error: telegramError instanceof Error ? telegramError.message : String(telegramError),
+        });
+      }
     }
 
     throw error;

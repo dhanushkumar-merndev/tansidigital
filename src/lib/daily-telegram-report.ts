@@ -176,8 +176,8 @@ function findBestCampaignMatch(
     })[0] ?? null;
 }
 
-function getCurrentMonthReportDateKeys() {
-  const todayKey = getIstDateKey(new Date());
+function getCurrentMonthReportDateKeys(today = new Date()) {
+  const todayKey = getIstDateKey(today);
   const allDateKeys: string[] = [];
   const istYear = Number(todayKey.substring(0, 4));
   const istMonth = Number(todayKey.substring(5, 7)) - 1;
@@ -248,7 +248,7 @@ function buildBrandReport(
     label: dashboard.tabLabels[tab] || tab,
     tab,
   }));
-  const todayKey = getIstDateKey(new Date());
+  const todayKey = getIstDateKey(reportDateKeys[reportDateKeys.length - 1] ? new Date(reportDateKeys[reportDateKeys.length - 1]) : new Date());
   const currentMonthPrefix = todayKey.substring(0, 8); // "YYYY-MM-"
 
   // Build a lookup of existing summaries for this month
@@ -551,9 +551,9 @@ function createReportImage(report: BrandReport) {
   return canvas.encode("png");
 }
 
-export async function createCombinedDailyReportImage() {
+export async function createCombinedDailyReportImage(today = new Date()) {
   const dashboard = await getDashboardData();
-  const reportDateKeys = getCurrentMonthReportDateKeys();
+  const reportDateKeys = getCurrentMonthReportDateKeys(today);
   const takingCampaignTabs = await getTakingCampaignTabs(
     dashboard,
     reportDateKeys[0] ?? null,
