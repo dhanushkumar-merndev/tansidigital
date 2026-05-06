@@ -180,16 +180,32 @@ function findBestCampaignMatch(
 
 function getCurrentMonthReportDateKeys(today = new Date()) {
   const todayKey = getIstDateKey(today);
-  const allDateKeys: string[] = [];
-  const istYear = Number(todayKey.substring(0, 4));
+  const istDay = Number(todayKey.substring(8, 10));
   const istMonth = Number(todayKey.substring(5, 7)) - 1;
-  const cursor = new Date(istYear, istMonth, 1);
+  const istYear = Number(todayKey.substring(0, 4));
 
-  while (true) {
-    const cursorKey = getIstDateKey(cursor);
-    if (cursorKey >= todayKey) break;
-    allDateKeys.push(cursorKey);
-    cursor.setDate(cursor.getDate() + 1);
+  const allDateKeys: string[] = [];
+
+  if (istDay === 1) {
+    // If it's the 1st, show the ENTIRE previous month
+    const cursor = new Date(istYear, istMonth - 1, 1);
+    const lastDayOfPrevMonthKey = getIstDateKey(new Date(istYear, istMonth, 0));
+    
+    while (true) {
+      const cursorKey = getIstDateKey(cursor);
+      allDateKeys.push(cursorKey);
+      if (cursorKey === lastDayOfPrevMonthKey) break;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  } else {
+    // Otherwise, show from the 1st of this month until yesterday
+    const cursor = new Date(istYear, istMonth, 1);
+    while (true) {
+      const cursorKey = getIstDateKey(cursor);
+      if (cursorKey >= todayKey) break;
+      allDateKeys.push(cursorKey);
+      cursor.setDate(cursor.getDate() + 1);
+    }
   }
 
   return allDateKeys;
@@ -326,7 +342,7 @@ async function createReportImage(report: BrandReport) {
   const rowOdd = isBigwingTheme ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.03)";
   const border = "rgba(255,255,255,0.18)";
 
-  const scale = 4;
+  const scale = 6;
   const paddingX = Math.round(44 * scale);
   const paddingY = Math.round(38 * scale);
   const titleHeight = Math.round(56 * scale);
