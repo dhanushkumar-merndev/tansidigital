@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
+import CountUp from "react-countup";
 import { useTransition } from "react";
 import { type DateRange } from "react-day-picker";
 
@@ -136,6 +137,7 @@ type PlatformDatum = {
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
 const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 const DASHBOARD_STAT_CACHE_KEY = "crm_dashboard_stat_cache_v1";
+const DASHBOARD_STAT_CACHE_MAX_ENTRIES_PER_BRAND = 80;
 const DASHBOARD_STAT_CACHE_WRITE_INTERVAL_MS = 5_000;
 const META_SPEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const EMPTY_DASHBOARD_DATA: DashboardData = {
@@ -329,70 +331,33 @@ function AnimatedDashboardValue({
   currency?: string;
   startingValue?: number;
 }) {
-  const initialValue =
-    typeof startingValue === "number" && Number.isFinite(startingValue)
-      ? startingValue
-      : animate
-        ? 0
-        : value;
-  const [displayValue, setDisplayValue] = React.useState(initialValue);
-  const displayValueRef = React.useRef(initialValue);
+  const endValue = Number.isFinite(value) ? value : 0;
+  const hasStartingValue =
+    typeof startingValue === "number" && Number.isFinite(startingValue);
+  const previousValueRef = React.useRef(hasStartingValue ? startingValue : endValue);
+  const startValue = hasStartingValue ? startingValue : previousValueRef.current;
+  const countKey = `${format}:${currency ?? ""}:${startValue}:${endValue}`;
 
   React.useEffect(() => {
-    const nextValue = Number.isFinite(value) ? value : 0;
-    const effectiveStartValue =
-      typeof startingValue === "number" &&
-      Number.isFinite(startingValue) &&
-      Math.abs(displayValueRef.current) < 0.01
-        ? startingValue
-        : displayValueRef.current;
-    const startValue = effectiveStartValue;
-    const delta = nextValue - startValue;
+    previousValueRef.current = endValue;
+  }, [endValue]);
 
-    if (Math.abs(delta) < 0.01) {
-      displayValueRef.current = nextValue;
-      setDisplayValue(nextValue);
-      return;
-    }
-
-    if (!animate) {
-      displayValueRef.current = nextValue;
-      setDisplayValue(nextValue);
-      return;
-    }
-
-    const duration = 1100;
-    const startTime = performance.now();
-    let frameId = 0;
-
-    const tick = (now: number) => {
-      const progress = Math.min((now - startTime) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      const nextDisplayValue = startValue + delta * eased;
-      displayValueRef.current = nextDisplayValue;
-      setDisplayValue(nextDisplayValue);
-
-      if (progress < 1) {
-        frameId = window.requestAnimationFrame(tick);
-      } else {
-        displayValueRef.current = nextValue;
-        setDisplayValue(nextValue);
+  return (
+    <CountUp
+      key={countKey}
+      decimals={format === "currency" ? 2 : 0}
+      duration={animate && Math.abs(endValue - startValue) >= 0.01 ? 0.9 : 0}
+      end={endValue}
+      formattingFn={(nextValue) =>
+        format === "currency"
+          ? formatCurrencyAmount(nextValue, currency)
+          : formatCompactNumber(nextValue)
       }
-    };
-
-    frameId = window.requestAnimationFrame(tick);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [animate, startingValue, value]);
-
-  const formattedValue =
-    format === "currency"
-      ? formatCurrencyAmount(displayValue, currency)
-      : formatCompactNumber(displayValue);
-
-  return <>{formattedValue}</>;
+      start={startValue}
+      redraw={false}
+      separator=","
+    />
+  );
 }
 
 function formatCompactNumber(value: number) {
@@ -435,27 +400,49 @@ function writeDashboardStatCacheStore(store: DashboardStatCacheStore) {
   }
 
   try {
-    window.localStorage.setItem(DASHBOARD_STAT_CACHE_KEY, JSON.stringify(store));
+    window.localStorage.setItem(
+      DASHBOARD_STAT_CACHE_KEY,
+      JSON.stringify(pruneDashboardStatCacheStore(store)),
+    );
   } catch {
     // Ignore storage failures so the live dashboard keeps working.
   }
+}
+
+function pruneDashboardStatCacheStore(store: DashboardStatCacheStore): DashboardStatCacheStore {
+  return Object.fromEntries(
+    Object.entries(store).map(([brand, bucket]) => {
+      if (!bucket) {
+        return [brand, bucket];
+      }
+
+      const entries = Object.entries(bucket)
+        .sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
+        .slice(0, DASHBOARD_STAT_CACHE_MAX_ENTRIES_PER_BRAND);
+
+      return [brand, Object.fromEntries(entries)];
+    }),
+  ) as DashboardStatCacheStore;
 }
 
 function buildDashboardStatCacheKey({
   brand,
   campaignFilter,
   from,
+  tabs,
   to,
 }: {
   brand: Brand;
   campaignFilter: string;
   from: Date | null | undefined;
+  tabs: string[];
   to: Date | null | undefined;
 }) {
   return JSON.stringify({
     brand,
     campaignFilter,
     from: from ? getIstDateKey(from) : null,
+    tabs,
     to: to ? getIstDateKey(to) : null,
   });
 }
@@ -987,23 +974,7 @@ export function DashboardClient({
     workbook.digitalLeads.length > 0 ||
     Boolean(workbook.error);
   const showInitialWorkbookLoading = isWorkbookLoading && !hasWorkbookPayload;
-  const dashboardStatCacheKey = React.useMemo(
-    () =>
-      buildDashboardStatCacheKey({
-        brand,
-        campaignFilter,
-        from: dateRange?.from,
-        to: dateRange?.to,
-      }),
-    [brand, campaignFilter, dateRange?.from, dateRange?.to],
-  );
   const tabBrandLookup = workbook.tabBrandLookup;
-
-  React.useLayoutEffect(() => {
-    setCachedDashboardCards(
-      readDashboardStatCacheStore()[brand]?.[dashboardStatCacheKey]?.cards ?? null,
-    );
-  }, [brand, dashboardStatCacheKey]);
 
   const filteredDashboardSummaries = React.useMemo(() => {
     const fromDate = dateRange?.from;
@@ -1105,6 +1076,24 @@ export function DashboardClient({
 
     return brandTabs.includes(campaignFilter) ? [campaignFilter] : [];
   }, [brandTabs, campaignFilter]);
+
+  const dashboardStatCacheKey = React.useMemo(
+    () =>
+      buildDashboardStatCacheKey({
+        brand,
+        campaignFilter,
+        from: dateRange?.from,
+        tabs: selectedTabs,
+        to: dateRange?.to,
+      }),
+    [brand, campaignFilter, dateRange?.from, dateRange?.to, selectedTabs],
+  );
+
+  React.useLayoutEffect(() => {
+    setCachedDashboardCards(
+      readDashboardStatCacheStore()[brand]?.[dashboardStatCacheKey]?.cards ?? null,
+    );
+  }, [brand, dashboardStatCacheKey]);
 
   const selectedBigwingTabs = React.useMemo(
     () => selectedTabs.filter((tab) => tabBrandLookup[tab] === "bigwing"),
@@ -1470,6 +1459,7 @@ export function DashboardClient({
 
     const cards: DashboardCard[] = [
       {
+        animate: true,
         hint: totalLeadHint,
         icon: Users,
         label: "Total Leads",
@@ -1478,6 +1468,7 @@ export function DashboardClient({
         value: formatCompactNumber(totalLeads),
       },
       {
+        animate: true,
         hint:
           campaignFilter === "all"
             ? `${selectedTabs.length} campaign${
@@ -1491,6 +1482,7 @@ export function DashboardClient({
         value: formatCompactNumber(selectedTabs.length),
       },
       {
+        animate: true,
         ariaLabel: "Open Meta campaign spend details",
         currency: metaSpend?.currency,
         format: metaSpend?.configured ? "currency" : undefined,
@@ -1506,6 +1498,7 @@ export function DashboardClient({
         value: metaCostValue,
       },
       {
+        animate: true,
         currency: metaSpend?.currency,
         format:
           metaSpend?.configured && matchedCampaigns.length > 0 ? "currency" : undefined,
@@ -2623,6 +2616,7 @@ export function DashboardClient({
                       <Line
                         type="monotone"
                         dataKey="leads"
+                        isAnimationActive={false}
                         stroke={chartPrimary}
                         strokeWidth={3}
                         dot={false}
@@ -2652,6 +2646,7 @@ export function DashboardClient({
                         outerRadius={104}
                         paddingAngle={2}
                         cornerRadius={3}
+                        isAnimationActive={false}
                         stroke="none"
                       >
                         {platformData.map((entry, index) => (
@@ -2706,7 +2701,7 @@ export function DashboardClient({
                           wrapperStyle={{ zIndex: 9999 }}
                         />
                         <Legend />
-                        <Bar dataKey="leads" fill={chartPrimary} radius={[12, 12, 0, 0]} activeBar={{ stroke: "none" }} />
+                        <Bar dataKey="leads" fill={chartPrimary} isAnimationActive={false} radius={[12, 12, 0, 0]} activeBar={{ stroke: "none" }} />
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
@@ -2777,7 +2772,7 @@ export function DashboardClient({
                               cursor={{ fill: chartHoverCursor }}
                               wrapperStyle={{ zIndex: 9999 }}
                             />
-                            <Bar dataKey="leads" fill={chartPrimary} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
+                            <Bar dataKey="leads" fill={chartPrimary} isAnimationActive={false} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
                           </BarChart>
                         </ResponsiveContainer>
                       ) : null
@@ -2823,7 +2818,7 @@ export function DashboardClient({
                               cursor={{ fill: chartHoverCursor }}
                               wrapperStyle={{ zIndex: 9999 }}
                             />
-                            <Bar dataKey="leads" fill={chartAccent} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
+                            <Bar dataKey="leads" fill={chartAccent} isAnimationActive={false} radius={[0, 12, 12, 0]} activeBar={{ stroke: "none" }} />
                           </BarChart>
                         </ResponsiveContainer>
                       ) : null
@@ -2890,9 +2885,9 @@ export function DashboardClient({
                         wrapperStyle={{ zIndex: 9999 }}
                       />
                       <Legend wrapperStyle={{ fontSize: "10px", marginTop: "10px" }} />
-                      <Line type="monotone" dataKey="actual" name="Actual" stroke="#ffffff" strokeWidth={2} dot={{ r: 3 }} />
-                      <Line type="monotone" dataKey="contacted" name="Contacted" stroke="#8de0ff" strokeWidth={2} dot={{ r: 3 }} />
-                      <Line type="monotone" dataKey="interested" name="Interested" stroke="#eefbff" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="actual" name="Actual" stroke="#ffffff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="contacted" name="Contacted" stroke="#8de0ff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="interested" name="Interested" stroke="#eefbff" strokeWidth={2} dot={false} isAnimationActive={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 ) : (
