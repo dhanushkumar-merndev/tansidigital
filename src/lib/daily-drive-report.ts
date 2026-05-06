@@ -24,6 +24,22 @@ function getGooglePrivateKey() {
 }
 
 function getDriveClient() {
+  const oauthRefreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim();
+
+  if (oauthRefreshToken) {
+    const oauth2Client = new google.auth.OAuth2(
+      getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID"),
+      getRequiredEnv("GOOGLE_OAUTH_CLIENT_SECRET"),
+      "https://developers.google.com/oauthplayground"
+    );
+
+    oauth2Client.setCredentials({
+      refresh_token: oauthRefreshToken,
+    });
+
+    return google.drive({ auth: oauth2Client, version: "v3" });
+  }
+
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: getRequiredEnv("GOOGLE_CLIENT_EMAIL"),
