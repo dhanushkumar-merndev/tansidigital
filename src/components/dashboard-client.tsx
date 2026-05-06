@@ -870,6 +870,7 @@ export function DashboardClient({
       { data: MetaSpendSummary | null; error: string | null; fetchedAt: number }
     >(),
   );
+  const selectedRangeRefreshAttemptRef = React.useRef("");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1017,6 +1018,34 @@ export function DashboardClient({
       return (!from || !isBefore(date, from)) && (!to || !isAfter(date, to));
     });
   }, [dateRange, workbook.dailySummaries]);
+  const hasSelectedRangeWithoutSummaries =
+    !showInitialWorkbookLoading &&
+    hasSummaryData &&
+    filteredDashboardSummaries.length === 0;
+
+  React.useEffect(() => {
+    if (!hasSelectedRangeWithoutSummaries || !dateRange?.from || !dateRange?.to) {
+      return;
+    }
+
+    const rangeKey = `${getIstDateKey(dateRange.from)}:${getIstDateKey(dateRange.to)}`;
+    if (selectedRangeRefreshAttemptRef.current === rangeKey) {
+      return;
+    }
+
+    selectedRangeRefreshAttemptRef.current = rangeKey;
+
+    void (async () => {
+      try {
+        await fetch("/api/dashboard/refresh", {
+          cache: "no-store",
+          method: "POST",
+        });
+      } finally {
+        await loadWorkbookData({ silent: true });
+      }
+    })();
+  }, [dateRange?.from, dateRange?.to, hasSelectedRangeWithoutSummaries]);
 
   const brandTabs = React.useMemo(() => {
     if (brand === "all") {
@@ -2484,6 +2513,24 @@ export function DashboardClient({
                     This dashboard reads the DATA-sheet summary rows. Once those
                     daily summary rows are present, the cards and charts below will
                     populate automatically.
+                  </p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {hasSelectedRangeWithoutSummaries ? (
+            <section className="crm-surface-radius border border-[#ffe7b0]/18 bg-[#ffe7b0]/8 p-5 text-[#ffe7b0] shadow-[0_20px_60px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
+              <div className="flex items-start gap-3">
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <h2 className="text-base font-semibold text-[#fff6d9]">
+                    No summary rows in this date range
+                  </h2>
+                  <p className="mt-2 text-sm leading-6">
+                    The loaded dashboard data does not include DATA summary rows for
+                    the selected dates. Refresh after the server cache expires or
+                    confirm the deployed environment is reading the current sheet.
                   </p>
                 </div>
               </div>

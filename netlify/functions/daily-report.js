@@ -1,6 +1,6 @@
 import { generateUploadAndNotifyDailyDriveReport } from "../../src/lib/daily-drive-report";
 
-const sendDailyTelegramReport = async () => {
+const dailyReport = async () => {
   try {
     const uploaded = await generateUploadAndNotifyDailyDriveReport();
 
@@ -11,10 +11,6 @@ const sendDailyTelegramReport = async () => {
       webViewLink: uploaded.webViewLink,
     });
   } catch (error) {
-    console.error("[daily-telegram-report] Failed to send report.", {
-      error: error instanceof Error ? error.message : error,
-    });
-
     return Response.json(
       {
         error: error instanceof Error ? error.message : String(error),
@@ -25,4 +21,4 @@ const sendDailyTelegramReport = async () => {
   }
 };
 
-export default sendDailyTelegramReport;
+export default dailyReport;

@@ -1,4 +1,4 @@
-import { promises as fs } from "fs";
+import { promises as fs, readFileSync } from "fs";
 import path from "path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -193,6 +193,7 @@ export type DashboardData = {
 };
 
 const DATA_SHEET_TITLE = "DATA";
+const DATA_SHEET_FULL_RANGE = `${DATA_SHEET_TITLE}!A:AT`;
 const DIGITAL_REPORT_TYPE = "redwing_digital_leads";
 const DEFAULT_REDWING_LOCATION_LABELS = [
   "gunjur",
@@ -260,6 +261,10 @@ function expandAliases(value: string) {
     .replace(/\bRW\b/gi, "Redwing")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeSheetTabName(value: string) {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function normalizeLookupKey(value: string) {
@@ -368,7 +373,7 @@ function normalizeBrandValue(value: string): ConcreteBrand | null {
 function splitMappingValues(value: string) {
   return value
     .split(/[\n|]+/)
-    .map((item) => expandAliases(item).trim())
+    .map((item) => item.trim())
     .filter(Boolean);
 }
 
@@ -377,7 +382,7 @@ function addBrandMappingEntry(
   brand: ConcreteBrand,
   value: string,
 ) {
-  const normalizedValue = normalizeLookupKey(expandAliases(value));
+  const normalizedValue = normalizeLookupKey(normalizeSheetTabName(value));
   if (!normalizedValue) return;
 
   brandByTab.set(normalizedValue, brand);
@@ -388,10 +393,10 @@ function addCanonicalTabEntry(
   canonicalTabName: string,
   value: string,
 ) {
-  const normalizedValue = normalizeLookupKey(expandAliases(value));
+  const normalizedValue = normalizeLookupKey(normalizeSheetTabName(value));
   if (!normalizedValue) return;
 
-  canonicalTabByLookup.set(normalizedValue, expandAliases(canonicalTabName));
+  canonicalTabByLookup.set(normalizedValue, normalizeSheetTabName(canonicalTabName));
 }
 
 function addCampaignAliasEntry(
@@ -399,10 +404,10 @@ function addCampaignAliasEntry(
   canonicalTabName: string,
   value: string,
 ) {
-  const alias = expandAliases(value).trim();
+  const alias = normalizeSheetTabName(value);
   if (!alias) return;
 
-  const key = expandAliases(canonicalTabName);
+  const key = normalizeSheetTabName(canonicalTabName);
   const existing = campaignAliasesByTab.get(key) ?? [];
 
   if (!existing.includes(alias)) {
@@ -790,8 +795,8 @@ function mapNamedCountsToTabs(
 
   for (const count of counts) {
     const canonicalTabName =
-      canonicalTabByLookup.get(normalizeLookupKey(expandAliases(count.name))) ??
-      expandAliases(count.name);
+      canonicalTabByLookup.get(normalizeLookupKey(normalizeSheetTabName(count.name))) ??
+      normalizeSheetTabName(count.name);
     if (!canonicalTabName) {
       continue;
     }
@@ -1089,17 +1094,17 @@ function extractDataSheetConfig(rawSheets: RawSheet[]): DataSheetConfig {
     ]);
 
     if (tabName && brand) {
-      const expandedTab = expandAliases(tabName);
-      tabs.add(expandedTab);
+      const canonicalTab = normalizeSheetTabName(tabName);
+      tabs.add(canonicalTab);
       if (tabAliases) {
-        tabLabels.set(expandedTab, tabAliases.trim());
+        tabLabels.set(canonicalTab, tabAliases.trim());
       }
       addBrandMappingEntry(brandByTab, brand, tabName);
       addCanonicalTabEntry(canonicalTabByLookup, tabName, tabName);
       addCampaignAliasEntry(campaignAliasesByTab, tabName, tabName);
 
       if (Number.isFinite(leadCount) && leadCount >= 0) {
-        leadCountByTab.set(expandAliases(tabName), leadCount);
+        leadCountByTab.set(canonicalTab, leadCount);
       }
 
       for (const alias of splitMappingValues(tabAliases)) {
@@ -1414,14 +1419,14 @@ function buildWorkbookStoreState(
   const usableSheets = rawSheets.filter((sheet) => sheet.title.trim().toUpperCase() !== DATA_SHEET_TITLE);
   const rowsByTab: Record<string, DashboardRow[]> = {};
   const sheetTitleByTab: Record<string, string> = {};
-  const tabs = usableSheets.map((sheet) => expandAliases(sheet.title));
+  const tabs = usableSheets.map((sheet) => normalizeSheetTabName(sheet.title));
 
   usableSheets.forEach((sheet) => {
-    const expandedTabName = expandAliases(sheet.title);
-    rowsByTab[expandedTabName] = sheet.rows
+    const canonicalTabName = normalizeSheetTabName(sheet.title);
+    rowsByTab[canonicalTabName] = sheet.rows
       .filter((row) => Object.values(row).some(Boolean) && isMeaningfulLeadSourceRow(row))
       .map((row, index) => normalizeRow(sheet.title, row, index, dataSheetConfig));
-    sheetTitleByTab[expandedTabName] = sheet.title;
+    sheetTitleByTab[canonicalTabName] = sheet.title;
   });
 
   return {
@@ -1442,7 +1447,7 @@ function buildWorkbookStoreState(
 }
 
 function buildWorkbookDataFromState(state: WorkbookStoreState): WorkbookData {
-  const spreadsheetId = process.env.SHEET_ID ?? "";
+  const spreadsheetId = getOptionalSpreadsheetId();
   const defaultTabName = process.env.TAB_NAME ?? "DATA";
   const rows = state.tabs.flatMap((tab) => state.rowsByTab[tab] ?? []);
 
@@ -1893,7 +1898,7 @@ function mapLeadsIndexRow(row: LeadsIndexRow): LeadsTableRow {
 }
 
 function buildWorkbookDataFromDatabase(database: DatabaseSync): WorkbookData {
-  const spreadsheetId = process.env.SHEET_ID ?? "";
+  const spreadsheetId = getOptionalSpreadsheetId();
   const defaultTabName = process.env.TAB_NAME ?? "DATA";
   const tabRows = database
     .prepare(`
@@ -1990,9 +1995,9 @@ function normalizeRow(
   index: number,
   dataSheetConfig: DataSheetConfig,
 ): DashboardRow {
-  const expandedTabName = expandAliases(tabName);
+  const normalizedTabName = normalizeSheetTabName(tabName);
   const canonicalTabName =
-    dataSheetConfig.canonicalTabByLookup.get(normalizeLookupKey(expandedTabName)) ?? expandedTabName;
+    dataSheetConfig.canonicalTabByLookup.get(normalizeLookupKey(normalizedTabName)) ?? normalizedTabName;
   const campaign = expandAliases(
     getFirstValue(row, ["campaign", "campaign_name", "campaignname"]) || canonicalTabName,
   );
@@ -2016,7 +2021,7 @@ function normalizeRow(
     getFirstValue(row, ["date", "day", "reporting_starts", "start_date", "created_time"]),
   );
   const brandAlias = expandAliases(getFirstValue(row, ["brand", "brand_alias", "account_name", "account"]));
-  const mappedBrand = dataSheetConfig.brandByTab.get(normalizeLookupKey(expandedTabName));
+  const mappedBrand = dataSheetConfig.brandByTab.get(normalizeLookupKey(normalizedTabName));
   const brand = mappedBrand ?? normalizeBrandValue(brandAlias);
 
   return {
@@ -2092,11 +2097,7 @@ function buildRawSheet(title: string, id: number, rows: string[][]) {
 }
 
 async function fetchRawSheets(): Promise<RawSheet[]> {
-  const spreadsheetId = process.env.SHEET_ID;
-
-  if (!spreadsheetId) {
-    throw new Error("Missing SHEET_ID.");
-  }
+  const spreadsheetId = getSpreadsheetId();
 
   const sheets = await getSheetsClient();
   const spreadsheet = await sheets.spreadsheets.get({
@@ -2108,8 +2109,12 @@ async function fetchRawSheets(): Promise<RawSheet[]> {
     spreadsheet.data.sheets
       ?.map((sheet) => sheet.properties?.title)
       .filter((title): title is string => Boolean(title))
-      .map((title: string) => `'${title.replace(/'/g, "''")}'`)
-      .map((title: string) => `${title}!A:ZZ`) ?? [];
+      .map((title: string) => {
+        const escapedTitle = `'${title.replace(/'/g, "''")}'`;
+        return title.trim().toUpperCase() === DATA_SHEET_TITLE
+          ? `${escapedTitle}!A:AT`
+          : `${escapedTitle}!A:ZZ`;
+      }) ?? [];
 
   if (ranges.length === 0) {
     return [];
@@ -2143,7 +2148,7 @@ async function fetchDataSheet(): Promise<RawSheet | null> {
   const response = (await Promise.race([
     sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${DATA_SHEET_TITLE}!A:ZZ`,
+      range: DATA_SHEET_FULL_RANGE,
       majorDimension: "ROWS",
     }),
     new Promise<never>((_, reject) =>
@@ -2214,7 +2219,7 @@ async function fetchIncrementalRawSheets(
 /** In-memory TTL cache shared across all requests (30 seconds) */
 const CACHE_TTL_MS = 60_000;
 const COUNT_CHECK_TTL_MS = 10_000;
-const DASHBOARD_CACHE_TTL_MS = 15_000;
+const DASHBOARD_CACHE_TTL_MS = 30_000;
 let _cachedData: WorkbookData | null = null;
 let _cacheTimestamp = 0;
 let _inflightPromise: Promise<WorkbookData> | null = null;
@@ -2264,7 +2269,7 @@ async function fetchLeadCountState(): Promise<LeadCountState> {
   const countByTab = new Map<string, number>();
 
   rows.slice(1).forEach((cells) => {
-    const tabName = expandAliases(String(cells[tabNameIndex] ?? "").trim());
+    const tabName = normalizeSheetTabName(String(cells[tabNameIndex] ?? ""));
     const leadCount = Number.parseInt(String(cells[leadCountIndex] ?? "").trim(), 10);
 
     if (tabName && Number.isFinite(leadCount) && leadCount >= 0) {
@@ -2326,7 +2331,7 @@ async function fetchWorkbookDataInternal(): Promise<WorkbookData> {
   try {
     return await refreshWorkbookStoreFromSheets(database);
   } catch (error) {
-    const spreadsheetId = process.env.SHEET_ID ?? "";
+    const spreadsheetId = getOptionalSpreadsheetId();
     const defaultTabName = process.env.TAB_NAME ?? "DATA";
     const message =
       error instanceof Error ? error.message : "Unable to read spreadsheet data right now.";
@@ -2455,12 +2460,12 @@ async function appendWorkbookStoreByAppend(
 
   try {
     incrementalSheets.forEach((sheet) => {
-      const expandedTabName = expandAliases(sheet.title);
-      const existingCount = metadata.leadCountByTab.get(expandedTabName) ?? 0;
-      const tabOrder = tabOrderByName.get(expandedTabName);
+      const canonicalTabName = normalizeSheetTabName(sheet.title);
+      const existingCount = metadata.leadCountByTab.get(canonicalTabName) ?? 0;
+      const tabOrder = tabOrderByName.get(canonicalTabName);
 
       if (tabOrder === undefined) {
-        throw new Error(`Missing workbook tab order for ${expandedTabName}.`);
+        throw new Error(`Missing workbook tab order for ${canonicalTabName}.`);
       }
 
       const appendedRows = sheet.rows
@@ -2495,7 +2500,7 @@ async function appendWorkbookStoreByAppend(
         insertSearch.run(row.id, searchText);
       });
 
-      nextLeadCountByTab.set(expandedTabName, existingCount + appendedRows.length);
+      nextLeadCountByTab.set(canonicalTabName, existingCount + appendedRows.length);
     });
 
     for (const tabName of changedTabs) {
@@ -2779,13 +2784,59 @@ export async function getLeadsPageData(
 }
 
 function getSpreadsheetId() {
-  const spreadsheetId = process.env.SHEET_ID;
+  const spreadsheetId = getOptionalSpreadsheetId();
 
   if (!spreadsheetId) {
-    throw new Error("Missing SHEET_ID.");
+    throw new Error("Missing GOOGLE_SHEET_ID or SHEET_ID.");
   }
 
   return spreadsheetId;
+}
+
+function getOptionalSpreadsheetId() {
+  const localGoogleSheetId = getLocalEnvValue("GOOGLE_SHEET_ID");
+  const localSheetId = getLocalEnvValue("SHEET_ID");
+
+  return (
+    localGoogleSheetId ||
+    localSheetId ||
+    process.env.GOOGLE_SHEET_ID?.trim() ||
+    process.env.SHEET_ID?.trim() ||
+    ""
+  );
+}
+
+function getLocalEnvValue(name: string) {
+  if (process.env.NODE_ENV === "production") {
+    return "";
+  }
+
+  try {
+    const envFile = readFileSync(path.join(process.cwd(), ".env"), "utf8");
+
+    for (const line of envFile.split(/\r?\n/)) {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.indexOf("=");
+
+      if (separatorIndex === -1 || trimmed.slice(0, separatorIndex).trim() !== name) {
+        continue;
+      }
+
+      return trimmed
+        .slice(separatorIndex + 1)
+        .trim()
+        .replace(/^['"]|['"]$/g, "");
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }
 
 function normalizeDigitalMetric(value: unknown) {

@@ -3,10 +3,10 @@ import { join } from "node:path";
 
 import { GlobalFonts, createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 
-import { BRAND_CONFIG, type Brand } from "./brands";
+import { type Brand } from "./brands";
 import { fetchMetaCampaignSpend, isMetaInsightsConfigured } from "./meta";
 import { getDashboardData } from "./sheets";
-import { sendTelegramDocument, sendTelegramTextMessage } from "./telegram";
+import { sendTelegramTextMessage } from "./telegram";
 
 type BrandReport = {
   brand: Brand;
@@ -100,14 +100,6 @@ function formatIstDate(dateKey: string) {
 
 function formatExportDateLabel(dateKey: string) {
   return formatIstDate(dateKey);
-}
-
-function getBrandHeading(brand: Brand) {
-  if (brand === "all") {
-    return "Combined";
-  }
-
-  return BRAND_CONFIG[brand].label;
 }
 
 function normalizeCampaignKey(value: string) {
@@ -331,7 +323,7 @@ function createReportImage(report: BrandReport) {
   const rowOdd = isBigwingTheme ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.03)";
   const border = "rgba(255,255,255,0.18)";
 
-  const scale = 2.2;
+  const scale = 3;
   const paddingX = Math.round(44 * scale);
   const paddingY = Math.round(38 * scale);
   const titleHeight = Math.round(56 * scale);
@@ -559,41 +551,25 @@ function createReportImage(report: BrandReport) {
   return canvas.encode("png");
 }
 
-export async function sendDailyTelegramReports() {
+export async function createCombinedDailyReportImage() {
   const dashboard = await getDashboardData();
-  const todayKey = getIstDateKey(new Date());
   const reportDateKeys = getCurrentMonthReportDateKeys();
-  const hasHistoricalRows = dashboard.dailySummaries.some((summary) => summary.date !== todayKey);
-
-  if (!hasHistoricalRows) {
-    await sendTelegramTextMessage(
-      [
-        "Digital Leads Report",
-        "No historical DATA summary rows were found before today.",
-      ].join("\n"),
-    );
-    return;
-  }
-
   const takingCampaignTabs = await getTakingCampaignTabs(
     dashboard,
     reportDateKeys[0] ?? null,
     reportDateKeys[reportDateKeys.length - 1] ?? null,
   );
-  const reports = [
-    buildBrandReport("all", dashboard, takingCampaignTabs, reportDateKeys),
-    buildBrandReport("bigwing", dashboard, takingCampaignTabs, reportDateKeys),
-    buildBrandReport("redwing", dashboard, takingCampaignTabs, reportDateKeys),
-  ];
+  const report = buildBrandReport("all", dashboard, takingCampaignTabs, reportDateKeys);
 
-  for (const report of reports) {
-    await sendTelegramDocument({
-      buffer: await createReportImage(report),
-      caption:
-        report.fromDateKey && report.toDateKey
-          ? `${getBrandHeading(report.brand)} • ${formatIstDate(report.fromDateKey)} - ${formatIstDate(report.toDateKey)}`
-          : getBrandHeading(report.brand),
-      filename: `digital-leads-${report.brand}-${report.fromDateKey ?? "report"}-${report.toDateKey ?? todayKey}.png`,
-    });
-  }
+  return createReportImage(report);
+}
+
+export async function sendDailyTelegramReports() {
+  await sendTelegramTextMessage(
+    [
+      "Digital Leads Report",
+      "Telegram image delivery is disabled.",
+      "Daily reports are uploaded to Google Drive by the daily-report function.",
+    ].join("\n"),
+  );
 }
