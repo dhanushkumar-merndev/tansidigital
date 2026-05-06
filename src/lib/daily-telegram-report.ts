@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { GlobalFonts, createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
+import type { SKRSContext2D } from "@napi-rs/canvas";
 
 import { type Brand } from "./brands";
 import { fetchMetaCampaignSpend, isMetaInsightsConfigured } from "./meta";
@@ -47,12 +47,14 @@ const REPORT_FONT_PATHS = [
 let resolvedReportFontFamily = "sans-serif";
 let hasAttemptedReportFontRegistration = false;
 
-function getReportFontFamily() {
+async function getReportFontFamily() {
   if (hasAttemptedReportFontRegistration) {
     return resolvedReportFontFamily;
   }
 
   hasAttemptedReportFontRegistration = true;
+
+  const { GlobalFonts } = await import("@napi-rs/canvas");
 
   for (const fontPath of REPORT_FONT_PATHS) {
     if (!existsSync(fontPath)) {
@@ -309,8 +311,9 @@ function wrapCanvasText(
   return lines;
 }
 
-function createReportImage(report: BrandReport) {
-  const fontFamily = getReportFontFamily();
+async function createReportImage(report: BrandReport) {
+  const fontFamily = await getReportFontFamily();
+  const { createCanvas } = await import("@napi-rs/canvas");
   const isBigwingTheme = report.brand === "bigwing";
   const background = isBigwingTheme ? "#050505" : "#0D4D8B";
   const panelStrong = isBigwingTheme

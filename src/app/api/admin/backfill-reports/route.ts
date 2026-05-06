@@ -1,4 +1,3 @@
-
 import { generateUploadAndNotifyDailyDriveReport } from "@/lib/daily-drive-report";
 
 export async function GET() {

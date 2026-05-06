@@ -1,4 +1,3 @@
-
 import { generateUploadAndNotifyDailyDriveReport } from "../src/lib/daily-drive-report.ts";
 import dotenv from "dotenv";
 dotenv.config();
