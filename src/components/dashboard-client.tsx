@@ -83,7 +83,6 @@ type DashboardCard = {
   label: string;
   numericValue?: number;
   onClick?: () => void;
-  startingValue?: number;
   value: string;
 };
 
@@ -99,17 +98,7 @@ type DigitalLeadsExportRow = {
   values: number[];
 };
 
-type CachedDashboardCard = Pick<
-  DashboardCard,
-  "currency" | "format" | "label" | "numericValue" | "value"
->;
 
-type DashboardStatCacheBucket = Record<
-  string,
-  { cards: CachedDashboardCard[]; updatedAt: number }
->;
-
-type DashboardStatCacheStore = Partial<Record<Brand, DashboardStatCacheBucket>>;
 
 type MetaCampaignModalTab = "taking" | "missing";
 
@@ -136,9 +125,6 @@ type PlatformDatum = {
 
 const brandOptions: Brand[] = ["all", "bigwing", "redwing"];
 const DASHBOARD_RANGE_START = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-const DASHBOARD_STAT_CACHE_KEY = "crm_dashboard_stat_cache_v1";
-const DASHBOARD_STAT_CACHE_MAX_ENTRIES_PER_BRAND = 80;
-const DASHBOARD_STAT_CACHE_WRITE_INTERVAL_MS = 5_000;
 const META_SPEND_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const EMPTY_DASHBOARD_DATA: DashboardData = {
   campaignAliasesByTab: {},
@@ -251,109 +237,133 @@ function DisabledAdNameSearchInput({ id }: { id: string }) {
   );
 }
 
-const DashboardStatCard = React.memo(function DashboardStatCard({
-  card,
-}: {
-  card: DashboardCard;
-}) {
-  const content = (
-    <>
-      <div className="mb-2 flex items-center justify-between sm:mb-4">
-        <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
-          {card.label}
-        </span>
-        <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-white/10 sm:h-10 sm:w-10 sm:rounded-2xl">
-          <card.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+const DashboardStatCard = React.memo(
+  function DashboardStatCard({
+    card,
+  }: {
+    card: DashboardCard;
+  }) {
+    const content = (
+      <>
+        <div className="mb-2 flex items-center justify-between sm:mb-4">
+          <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
+            {card.label}
+          </span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-white/10 sm:h-10 sm:w-10 sm:rounded-2xl">
+            <card.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+          </div>
         </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
-          {typeof card.numericValue === "number" && card.format ? (
-            <AnimatedDashboardValue
-              animate={card.animate}
-              currency={card.currency}
-              format={card.format}
-              startingValue={card.startingValue}
-              value={card.numericValue}
-            />
-          ) : (
-            card.value
-          )}
+        <div className="flex items-center gap-2">
+          <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-3xl">
+            {typeof card.numericValue === "number" ? (
+              <AnimatedDashboardValue
+                animate={card.animate}
+                currency={card.currency}
+                format={card.format || "compact"}
+                value={card.numericValue}
+              />
+            ) : (
+              card.value
+            )}
+          </div>
+          <div
+            className={`h-2 w-2 rounded-full bg-white/60 transition-opacity duration-150 ${
+              card.isRefreshing ? "animate-pulse opacity-100" : "opacity-0"
+            }`}
+          />
         </div>
-        <div
-          className={`h-2 w-2 rounded-full bg-white/60 transition-opacity duration-150 ${
-            card.isRefreshing ? "animate-pulse opacity-100" : "opacity-0"
-          }`}
-        />
-      </div>
-      <p className="mt-1 text-[10px] leading-none text-white/54 sm:mt-2 sm:text-sm sm:leading-normal">
-        {card.hint}
-      </p>
-    </>
-  );
-
-  const className = `crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4 ${
-    card.onClick
-      ? "w-full text-left text-white transition hover:border-white/28 hover:bg-white/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
-      : ""
-  }`;
-
-  if (card.onClick) {
-    return (
-      <button
-        type="button"
-        onClick={card.onClick}
-        className={className}
-        aria-label={card.ariaLabel ?? `Open ${card.label} details`}
-      >
-        {content}
-      </button>
+        <p className="mt-1 text-[10px] leading-none text-white/54 sm:mt-2 sm:text-sm sm:leading-normal">
+          {card.hint}
+        </p>
+      </>
     );
-  }
 
-  return (
-    <div className={className}>
-      {content}
-    </div>
-  );
-});
+    const className = `crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:p-4 ${
+      card.onClick
+        ? "w-full text-left text-white transition hover:border-white/28 hover:bg-white/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45"
+        : ""
+    }`;
+
+    if (card.onClick) {
+      return (
+        <button
+          type="button"
+          onClick={card.onClick}
+          className={className}
+          aria-label={card.ariaLabel ?? `Open ${card.label} details`}
+        >
+          {content}
+        </button>
+      );
+    }
+
+    return (
+      <div className={className}>
+        {content}
+      </div>
+    );
+  },
+  (prev, next) => {
+    // Only re-render if visual or data properties change.
+    return (
+      prev.card.label === next.card.label &&
+      prev.card.numericValue === next.card.numericValue &&
+      prev.card.animate === next.card.animate &&
+      prev.card.isRefreshing === next.card.isRefreshing &&
+      prev.card.hint === next.card.hint &&
+      prev.card.format === next.card.format &&
+      prev.card.currency === next.card.currency
+    );
+  },
+);
 
 function AnimatedDashboardValue({
   value,
   format,
   currency,
   animate = true,
-  startingValue,
 }: {
   animate?: boolean;
   value: number;
   format: "compact" | "currency";
   currency?: string;
-  startingValue?: number;
 }) {
   const endValue = Number.isFinite(value) ? value : 0;
-  const hasStartingValue =
-    typeof startingValue === "number" && Number.isFinite(startingValue);
-  const previousValueRef = React.useRef(hasStartingValue ? startingValue : endValue);
-  const startValue = hasStartingValue ? startingValue : previousValueRef.current;
-  const countKey = `${format}:${currency ?? ""}:${startValue}:${endValue}`;
+  const [displayState, setDisplayState] = React.useState({
+    start: animate ? 0 : endValue,
+    end: endValue,
+  });
+
+  const isFirstUpdateRef = React.useRef(true);
 
   React.useEffect(() => {
-    previousValueRef.current = endValue;
-  }, [endValue]);
+    if (endValue !== displayState.end) {
+      setDisplayState((prev) => {
+        const startFrom = prev.end === 0 && isFirstUpdateRef.current && animate ? 0 : prev.end;
+        isFirstUpdateRef.current = false;
+        return {
+          start: startFrom,
+          end: endValue,
+        };
+      });
+    }
+  }, [endValue, animate, displayState.end]);
 
+  const { start: startValue, end: finalEndValue } = displayState;
   return (
     <CountUp
-      key={countKey}
       decimals={format === "currency" ? 2 : 0}
-      duration={animate && Math.abs(endValue - startValue) >= 0.01 ? 0.9 : 0}
-      end={endValue}
+      duration={animate && Math.abs(finalEndValue - startValue) >= 0.01 ? 2.5 : 0}
+      end={finalEndValue}
       formattingFn={(nextValue) =>
         format === "currency"
           ? formatCurrencyAmount(nextValue, currency)
           : formatCompactNumber(nextValue)
       }
       start={startValue}
+      onEnd={() => {
+        setDisplayState((prev) => ({ ...prev, start: prev.end }));
+      }}
       redraw={false}
       separator=","
     />
@@ -376,76 +386,6 @@ function formatCurrencyAmount(value: number, currency = "INR") {
   }).format(value);
 }
 
-function readDashboardStatCacheStore(): DashboardStatCacheStore {
-  if (typeof window === "undefined") {
-    return {};
-  }
-
-  try {
-    const rawValue = window.localStorage.getItem(DASHBOARD_STAT_CACHE_KEY);
-    if (!rawValue) {
-      return {};
-    }
-
-    const parsed = JSON.parse(rawValue) as DashboardStatCacheStore;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeDashboardStatCacheStore(store: DashboardStatCacheStore) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(
-      DASHBOARD_STAT_CACHE_KEY,
-      JSON.stringify(pruneDashboardStatCacheStore(store)),
-    );
-  } catch {
-    // Ignore storage failures so the live dashboard keeps working.
-  }
-}
-
-function pruneDashboardStatCacheStore(store: DashboardStatCacheStore): DashboardStatCacheStore {
-  return Object.fromEntries(
-    Object.entries(store).map(([brand, bucket]) => {
-      if (!bucket) {
-        return [brand, bucket];
-      }
-
-      const entries = Object.entries(bucket)
-        .sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
-        .slice(0, DASHBOARD_STAT_CACHE_MAX_ENTRIES_PER_BRAND);
-
-      return [brand, Object.fromEntries(entries)];
-    }),
-  ) as DashboardStatCacheStore;
-}
-
-function buildDashboardStatCacheKey({
-  brand,
-  campaignFilter,
-  from,
-  tabs,
-  to,
-}: {
-  brand: Brand;
-  campaignFilter: string;
-  from: Date | null | undefined;
-  tabs: string[];
-  to: Date | null | undefined;
-}) {
-  return JSON.stringify({
-    brand,
-    campaignFilter,
-    from: from ? getIstDateKey(from) : null,
-    tabs,
-    to: to ? getIstDateKey(to) : null,
-  });
-}
 
 function renderTooltipRow(
   label: string,
@@ -845,9 +785,6 @@ export function DashboardClient({
   const [isWorkbookLoading, setIsWorkbookLoading] = React.useState(
     initialWorkbook === null,
   );
-  const [cachedDashboardCards, setCachedDashboardCards] = React.useState<
-    CachedDashboardCard[] | null
-  >(null);
   const [workbook, setWorkbook] = React.useState<DashboardData>(
     initialWorkbook ?? EMPTY_DASHBOARD_DATA,
   );
@@ -1077,23 +1014,6 @@ export function DashboardClient({
     return brandTabs.includes(campaignFilter) ? [campaignFilter] : [];
   }, [brandTabs, campaignFilter]);
 
-  const dashboardStatCacheKey = React.useMemo(
-    () =>
-      buildDashboardStatCacheKey({
-        brand,
-        campaignFilter,
-        from: dateRange?.from,
-        tabs: selectedTabs,
-        to: dateRange?.to,
-      }),
-    [brand, campaignFilter, dateRange?.from, dateRange?.to, selectedTabs],
-  );
-
-  React.useLayoutEffect(() => {
-    setCachedDashboardCards(
-      readDashboardStatCacheStore()[brand]?.[dashboardStatCacheKey]?.cards ?? null,
-    );
-  }, [brand, dashboardStatCacheKey]);
 
   const selectedBigwingTabs = React.useMemo(
     () => selectedTabs.filter((tab) => tabBrandLookup[tab] === "bigwing"),
@@ -1453,13 +1373,13 @@ export function DashboardClient({
     const totalLeadHint =
       campaignFilter === "all"
         ? brand === "all"
-        ? `Total leads among ${selectedTabs.length} campaigns`
+        ? `Total leads among ${matchedCampaigns.length} campaigns`
           : `${BRAND_CONFIG[brand].label} total leads`
         : "Total leads for the selected campaign";
 
     const cards: DashboardCard[] = [
       {
-        animate: true,
+        animate: hasWorkbookPayload,
         hint: totalLeadHint,
         icon: Users,
         label: "Total Leads",
@@ -1468,7 +1388,7 @@ export function DashboardClient({
         value: formatCompactNumber(totalLeads),
       },
       {
-        animate: true,
+        animate: hasWorkbookPayload,
         hint:
           campaignFilter === "all"
             ? `${selectedTabs.length} campaign${
@@ -1478,11 +1398,11 @@ export function DashboardClient({
         icon: Target,
         label: "Campaign Count",
         format: "compact",
-        numericValue: selectedTabs.length,
-        value: formatCompactNumber(selectedTabs.length),
+        numericValue: matchedCampaigns.length,
+        value: formatCompactNumber(matchedCampaigns.length),
       },
       {
-        animate: true,
+        animate: hasWorkbookPayload,
         ariaLabel: "Open Meta campaign spend details",
         currency: metaSpend?.currency,
         format: metaSpend?.configured ? "currency" : undefined,
@@ -1498,7 +1418,7 @@ export function DashboardClient({
         value: metaCostValue,
       },
       {
-        animate: true,
+        animate: hasWorkbookPayload,
         currency: metaSpend?.currency,
         format:
           metaSpend?.configured && matchedCampaigns.length > 0 ? "currency" : undefined,
@@ -1528,139 +1448,11 @@ export function DashboardClient({
     metaSpend,
     metaCpcAverage,
     matchedCampaigns.length,
-  ]);
-
-  React.useEffect(() => {
-    if (!hasWorkbookPayload || showInitialWorkbookLoading) {
-      return;
-    }
-
-    const persistCards = () => {
-      const existingStore = readDashboardStatCacheStore();
-      const brandCacheBucket = existingStore[brand] ?? {};
-      const previousCards = brandCacheBucket[dashboardStatCacheKey]?.cards ?? [];
-      const previousByLabel = new Map(
-        previousCards.map((card) => [card.label, card]),
-      );
-
-      const nextCards = dashboardCards.map<CachedDashboardCard>((card) => {
-        const isStableValue =
-          typeof card.numericValue === "number" &&
-          Number.isFinite(card.numericValue);
-
-        if (isStableValue) {
-          return {
-            currency: card.currency,
-            format: card.format,
-            label: card.label,
-            numericValue: card.numericValue,
-            value: card.value,
-          };
-        }
-
-        return (
-          previousByLabel.get(card.label) ?? {
-            currency: card.currency,
-            format: card.format,
-            label: card.label,
-            numericValue: card.numericValue,
-            value: card.value,
-          }
-        );
-      });
-
-      const nextStore: DashboardStatCacheStore = {
-        ...existingStore,
-        [brand]: {
-          ...brandCacheBucket,
-          [dashboardStatCacheKey]: {
-            cards: nextCards,
-            updatedAt: Date.now(),
-          },
-        },
-      };
-
-      writeDashboardStatCacheStore(nextStore);
-      setCachedDashboardCards(nextCards);
-    };
-
-    persistCards();
-    const interval = window.setInterval(
-      persistCards,
-      DASHBOARD_STAT_CACHE_WRITE_INTERVAL_MS,
-    );
-
-    return () => window.clearInterval(interval);
-  }, [
-    brand,
-    dashboardCards,
-    dashboardStatCacheKey,
     hasWorkbookPayload,
-    showInitialWorkbookLoading,
   ]);
 
-  const displayDashboardCards = React.useMemo(() => {
-    if (!cachedDashboardCards?.length) {
-      return dashboardCards;
-    }
 
-    const cachedCardsByLabel = new Map(
-      cachedDashboardCards.map((card) => [card.label, card]),
-    );
-
-    return dashboardCards.map((card) => {
-      const cachedCard = cachedCardsByLabel.get(card.label);
-      if (!cachedCard) {
-        return card;
-      }
-
-      if (showInitialWorkbookLoading) {
-        return {
-          ...card,
-          animate: false,
-          currency: cachedCard.currency ?? card.currency,
-          format: cachedCard.format ?? card.format,
-          isRefreshing: false,
-          numericValue: cachedCard.numericValue,
-          value: cachedCard.value,
-        };
-      }
-
-      if (typeof card.numericValue === "number") {
-        const cachedNumericValue =
-          typeof cachedCard.numericValue === "number" &&
-          Number.isFinite(cachedCard.numericValue)
-            ? cachedCard.numericValue
-            : null;
-        const shouldAnimateFromCache =
-          cachedNumericValue !== null &&
-          Math.abs(card.numericValue - cachedNumericValue) >= 0.01;
-
-        return {
-          ...card,
-          animate: shouldAnimateFromCache,
-          startingValue: shouldAnimateFromCache ? cachedNumericValue : undefined,
-        };
-      }
-
-      if (
-        card.isRefreshing &&
-        typeof cachedCard.numericValue === "number" &&
-        cachedCard.format
-      ) {
-        return {
-          ...card,
-          animate: false,
-          currency: cachedCard.currency ?? card.currency,
-          format: cachedCard.format ?? card.format,
-          numericValue: cachedCard.numericValue,
-          value: cachedCard.value,
-        };
-      }
-
-      return card;
-    });
-  }, [cachedDashboardCards, dashboardCards, showInitialWorkbookLoading]);
+  const displayDashboardCards = dashboardCards;
 
   const filteredDigitalLeads = React.useMemo(() => {
     const fromDate = dateRange?.from;
