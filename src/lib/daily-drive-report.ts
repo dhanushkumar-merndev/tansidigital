@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+
 import { google } from "googleapis";
 
 import { createCombinedDailyReportImage } from "./daily-telegram-report";
@@ -136,7 +138,7 @@ async function uploadReportImage({
       fileId: existingFile.id,
       fields: "id, name, webViewLink",
       media: {
-        body: Buffer.from(buffer),
+        body: Readable.from(Buffer.from(buffer)),
         mimeType: "image/png",
       },
       requestBody: {
@@ -160,7 +162,7 @@ async function uploadReportImage({
   const upload = await drive.files.create({
     fields: "id, name, webViewLink",
     media: {
-      body: Buffer.from(buffer),
+      body: Readable.from(Buffer.from(buffer)),
       mimeType: "image/png",
     },
     requestBody: {

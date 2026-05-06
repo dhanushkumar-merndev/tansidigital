@@ -2,7 +2,6 @@ import { generateUploadAndNotifyDailyDriveReport } from "@/lib/daily-drive-repor
 
 export async function GET() {
   const results = [];
-  const today = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   
   // May 1st to May 5th

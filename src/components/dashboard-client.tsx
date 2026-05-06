@@ -1722,7 +1722,7 @@ export function DashboardClient({
         ? "rgba(255,255,255,0.025)"
         : "rgba(255,255,255,0.03)";
       const exportBorder = "rgba(255,255,255,0.18)";
-      const exportScale = 1.4;
+      const exportScale = 3;
       const paddingX = 44 * exportScale;
       const paddingY = 38 * exportScale;
       const titleHeight = 48 * exportScale;
@@ -1746,7 +1746,7 @@ export function DashboardClient({
         totalRowHeight +
         leadTotalRowHeight;
       const canvas = document.createElement("canvas");
-      const pixelRatio = Math.max(window.devicePixelRatio || 1, 5);
+      const pixelRatio = 4;
 
       canvas.width = Math.round(canvasWidth * pixelRatio);
       canvas.height = Math.round(canvasHeight * pixelRatio);
@@ -1970,8 +1970,8 @@ export function DashboardClient({
         digitalLeadsExportTable.rows[digitalLeadsExportTable.rows.length - 1]?.dateKey ??
         "range";
 
-      link.href = canvas.toDataURL("image/jpeg", 1);
-      link.download = `digital-leads-${brand}-${fromKey}-${toKey}.jpeg`;
+      link.href = canvas.toDataURL("image/png");
+      link.download = `digital-leads-${brand}-${fromKey}-${toKey}.png`;
       link.click();
     } finally {
       setIsExportingDigitalLeads(false);
