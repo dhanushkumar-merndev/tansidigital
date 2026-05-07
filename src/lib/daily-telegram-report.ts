@@ -32,12 +32,18 @@ type RequestedCampaign = {
 };
 
 const REPORT_FONT_FAMILY = "Digital Leads Report Sans";
-const REPORT_FONT_PATHS = [
+const REPORT_SYMBOL_FONT_FAMILY = "Digital Leads Report Symbols";
+const REPORT_PRIMARY_FONT_PATHS = [
   join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "Avenir LT Std 55 Roman.otf"),
   join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "report-font.ttf"),
   join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "report-font.ttf"),
   join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "DigitalLeads.ttf"),
   join(/*turbopackIgnore: true*/ process.cwd(), "public", "fonts", "report-font.ttf"),
+];
+const REPORT_SYMBOL_FONT_PATHS = [
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "NotoSans-Regular.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "NotoSans-Regular.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "public", "fonts", "NotoSans-Regular.ttf"),
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
@@ -46,6 +52,18 @@ const REPORT_FONT_PATHS = [
 
 let resolvedReportFontFamily = "sans-serif";
 let hasAttemptedReportFontRegistration = false;
+
+function quoteFontFamily(fontFamily: string) {
+  return `"${fontFamily}"`;
+}
+
+function appendFontFallback(fontFamily: string, fallbackFontFamily: string) {
+  if (fontFamily === "sans-serif") {
+    return `${quoteFontFamily(fallbackFontFamily)}, sans-serif`;
+  }
+
+  return `${fontFamily}, ${quoteFontFamily(fallbackFontFamily)}, sans-serif`;
+}
 
 async function getReportFontFamily() {
   if (hasAttemptedReportFontRegistration) {
@@ -56,7 +74,7 @@ async function getReportFontFamily() {
 
   const { GlobalFonts } = await import("@napi-rs/canvas");
 
-  for (const fontPath of REPORT_FONT_PATHS) {
+  for (const fontPath of REPORT_PRIMARY_FONT_PATHS) {
     if (!existsSync(fontPath)) {
       continue;
     }
@@ -65,8 +83,8 @@ async function getReportFontFamily() {
       const fontKey = GlobalFonts.registerFromPath(fontPath, REPORT_FONT_FAMILY);
 
       if (fontKey) {
-        resolvedReportFontFamily = `"${REPORT_FONT_FAMILY}"`;
-        return resolvedReportFontFamily;
+        resolvedReportFontFamily = quoteFontFamily(REPORT_FONT_FAMILY);
+        break;
       }
     } catch (error) {
       console.warn("[daily-telegram-report] Failed to register report font.", {
@@ -76,7 +94,33 @@ async function getReportFontFamily() {
     }
   }
 
-  console.warn("[daily-telegram-report] No server font was registered. Falling back to sans-serif.");
+  for (const fontPath of REPORT_SYMBOL_FONT_PATHS) {
+    if (!existsSync(fontPath)) {
+      continue;
+    }
+
+    try {
+      const fontKey = GlobalFonts.registerFromPath(fontPath, REPORT_SYMBOL_FONT_FAMILY);
+
+      if (fontKey) {
+        resolvedReportFontFamily = appendFontFallback(
+          resolvedReportFontFamily,
+          REPORT_SYMBOL_FONT_FAMILY,
+        );
+        break;
+      }
+    } catch (error) {
+      console.warn("[daily-telegram-report] Failed to register report symbol font.", {
+        error: error instanceof Error ? error.message : String(error),
+        fontPath,
+      });
+    }
+  }
+
+  if (resolvedReportFontFamily === "sans-serif") {
+    console.warn("[daily-telegram-report] No server font was registered. Falling back to sans-serif.");
+  }
+
   return resolvedReportFontFamily;
 }
 
