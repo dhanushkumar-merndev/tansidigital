@@ -266,13 +266,12 @@ function buildBrandReport(
     label: dashboard.tabLabels[tab] || tab,
     tab,
   }));
-  const todayKey = getIstDateKey(reportDateKeys[reportDateKeys.length - 1] ? new Date(reportDateKeys[reportDateKeys.length - 1]) : new Date());
-  const currentMonthPrefix = todayKey.substring(0, 8); // "YYYY-MM-"
+  const reportDateKeySet = new Set(reportDateKeys);
 
-  // Build a lookup of existing summaries for this month
+  // Build a lookup only for the dates that are rendered in this report.
   const summariesByDate = new Map(
     dashboard.dailySummaries
-      .filter((summary) => summary.date.startsWith(currentMonthPrefix) && summary.date !== todayKey)
+      .filter((summary) => reportDateKeySet.has(summary.date))
       .map((summary) => [summary.date, summary] as const),
   );
 
