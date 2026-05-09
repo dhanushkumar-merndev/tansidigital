@@ -1,2 +1,2 @@
 [functions."daily-report"]
-schedule = "50 13 * * *"
+schedule = "30 3 * * *"
