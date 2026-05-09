@@ -3,7 +3,10 @@ import { Readable } from "node:stream";
 import { google } from "googleapis";
 
 import { createCombinedDailyReportImage } from "./daily-telegram-report";
-import { sendTelegramTextMessage, sendTelegramTextMessageWithButton } from "./telegram";
+import {
+  sendTelegramTextMessageWithButton,
+  sendTelegramTextMessageWithCallbackButton,
+} from "./telegram";
 
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
@@ -73,10 +76,25 @@ function getIstParts(date = new Date()) {
 
   return {
     day,
+    dateKey: `${year}-${monthNumber}-${day}`,
     filename: `${day}-${monthNumber}-${year}.png`,
     month: monthName,
     year,
   };
+}
+
+export function parseDailyReportDateKey(dateKey: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    throw new Error("Invalid daily report retry date.");
+  }
+
+  const parsed = new Date(`${dateKey}T00:00:00+05:30`);
+
+  if (Number.isNaN(parsed.getTime()) || getIstParts(parsed).dateKey !== dateKey) {
+    throw new Error("Invalid daily report retry date.");
+  }
+
+  return parsed;
 }
 
 async function getOrCreateFolder({
@@ -134,44 +152,16 @@ async function uploadReportImage({
   folderId: string;
 }) {
   const drive = getDriveClient();
-  const escapedFilename = escapeDriveQueryValue(filename);
-  const escapedFolderId = escapeDriveQueryValue(folderId);
-  const existing = await drive.files.list({
-    fields: "files(id, name, webViewLink)",
-    includeItemsFromAllDrives: true,
-    q: [
-      `name = '${escapedFilename}'`,
-      `mimeType = 'image/png'`,
-      `'${escapedFolderId}' in parents`,
-      "trashed = false",
-    ].join(" and "),
-    supportsAllDrives: true,
+  const existingFile = await findReportImage({
+    drive,
+    filename,
+    folderId,
   });
-  const existingFile = existing.data.files?.[0];
 
-  if (existingFile?.id) {
-    const updated = await drive.files.update({
-      fileId: existingFile.id,
-      fields: "id, name, webViewLink",
-      media: {
-        body: Readable.from(Buffer.from(buffer)),
-        mimeType: "image/png",
-      },
-      requestBody: {
-        mimeType: "image/png",
-        name: filename,
-      },
-      supportsAllDrives: true,
-    });
-
-    if (!updated.data.id || !updated.data.webViewLink) {
-      throw new Error("Google Drive update finished without a file link.");
-    }
-
+  if (existingFile) {
     return {
-      fileId: updated.data.id,
-      filename: updated.data.name ?? filename,
-      webViewLink: updated.data.webViewLink,
+      ...existingFile,
+      status: "existing" as const,
     };
   }
 
@@ -196,8 +186,47 @@ async function uploadReportImage({
   return {
     fileId: upload.data.id,
     filename: upload.data.name ?? filename,
+    status: "created" as const,
     webViewLink: upload.data.webViewLink,
   };
+}
+
+async function findReportImages({
+  drive,
+  filename,
+  folderId,
+}: {
+  drive: ReturnType<typeof getDriveClient>;
+  filename: string;
+  folderId: string;
+}) {
+  const escapedFilename = escapeDriveQueryValue(filename);
+  const escapedFolderId = escapeDriveQueryValue(folderId);
+  const existing = await drive.files.list({
+    fields: "files(id, name, webViewLink, createdTime)",
+    includeItemsFromAllDrives: true,
+    orderBy: "createdTime",
+    q: [
+      `name = '${escapedFilename}'`,
+      `mimeType = 'image/png'`,
+      `'${escapedFolderId}' in parents`,
+      "trashed = false",
+    ].join(" and "),
+    supportsAllDrives: true,
+  });
+
+  return (existing.data.files ?? [])
+    .filter((file) => file.id && file.webViewLink)
+    .map((file) => ({
+      createdTime: file.createdTime ?? "",
+      fileId: file.id as string,
+      filename: file.name ?? filename,
+      webViewLink: file.webViewLink as string,
+    }));
+}
+
+async function findReportImage(input: Parameters<typeof findReportImages>[0]) {
+  return (await findReportImages(input))[0] ?? null;
 }
 
 async function resolveReportFolder(date = new Date()) {
@@ -227,11 +256,26 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
   console.info(`[daily-drive-report] Starting daily report upload for ${date.toISOString()}.`);
 
   try {
+    const drive = getDriveClient();
     const folder = await resolveReportFolder(date);
     console.info("[daily-drive-report] Drive folder resolved.", {
       month: folder.month,
       year: folder.year,
     });
+
+    const existingFile = await findReportImage({
+      drive,
+      filename: folder.filename,
+      folderId: folder.folderId,
+    });
+
+    if (existingFile) {
+      console.info("[daily-drive-report] Report already exists in Google Drive.", {
+        fileId: existingFile.fileId,
+        filename: existingFile.filename,
+      });
+      return existingFile;
+    }
 
     const buffer = await createCombinedDailyReportImage(date);
     console.info("[daily-drive-report] Combined report image generated.", {
@@ -247,9 +291,18 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
     console.info("[daily-drive-report] Report uploaded to Google Drive.", {
       fileId: uploaded.fileId,
       filename: uploaded.filename,
+      status: uploaded.status,
     });
 
-    if (notify) {
+    const firstReportFile = await findReportImage({
+      drive,
+      filename: folder.filename,
+      folderId: folder.folderId,
+    });
+    const shouldNotifySuccess =
+      uploaded.status === "created" && firstReportFile?.fileId === uploaded.fileId;
+
+    if (notify && shouldNotifySuccess) {
       await sendTelegramTextMessageWithButton({
         buttonText: "View",
         text: [
@@ -260,6 +313,12 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
         url: uploaded.webViewLink,
       });
       console.info("[daily-drive-report] Telegram success notification sent.");
+    } else if (notify) {
+      console.info("[daily-drive-report] Telegram success notification skipped.", {
+        firstFileId: firstReportFile?.fileId ?? null,
+        uploadedFileId: uploaded.fileId,
+        uploadStatus: uploaded.status,
+      });
     }
 
     return uploaded;
@@ -271,9 +330,11 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
 
     if (notify) {
       try {
-        await sendTelegramTextMessage(
-          ["Daily report upload failed.", `Error: ${message}`].join("\n"),
-        );
+        await sendTelegramTextMessageWithCallbackButton({
+          buttonText: "Retry",
+          callbackData: `daily_report_retry:${getIstParts(date).dateKey}`,
+          text: ["Daily report upload failed.", `Error: ${message}`].join("\n"),
+        });
       } catch (telegramError) {
         console.error("[daily-drive-report] Failed to send Telegram failure notification.", {
           error: telegramError instanceof Error ? telegramError.message : String(telegramError),

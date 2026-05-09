@@ -103,6 +103,36 @@ export async function sendTelegramTextMessageWithButton({
   );
 }
 
+export async function sendTelegramTextMessageWithCallbackButton({
+  buttonText,
+  callbackData,
+  chatId = getTelegramChatId(),
+  text,
+}: {
+  buttonText: string;
+  callbackData: string;
+  chatId?: number | string;
+  text: string;
+}) {
+  return telegramRequest<{ chat: { id: number | string }; message_id: number }>(
+    "sendMessage",
+    {
+      chat_id: chatId,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              callback_data: callbackData,
+              text: buttonText,
+            },
+          ],
+        ],
+      },
+      text,
+    },
+  );
+}
+
 function buildApprovalMessageText({
   createdTime,
   name,

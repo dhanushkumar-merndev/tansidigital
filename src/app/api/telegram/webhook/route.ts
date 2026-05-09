@@ -34,6 +34,18 @@ function parseCallbackData(value: string | undefined) {
   return { action, userId };
 }
 
+function parseDailyReportRetryCallbackData(value: string | undefined) {
+  if (!value) return null;
+
+  const [action, dateKey] = value.split(":");
+
+  if (action !== "daily_report_retry" || !dateKey) {
+    return null;
+  }
+
+  return { dateKey };
+}
+
 function isExpiredTelegramCallbackError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   return (
@@ -50,6 +62,50 @@ export async function POST(request: Request) {
   try {
     if (!callbackQuery) {
       console.info("[telegram-webhook] Ignored update without callback_query.");
+      return NextResponse.json({ ok: true });
+    }
+
+    const dailyReportRetry = parseDailyReportRetryCallbackData(callbackQuery.data);
+
+    if (dailyReportRetry) {
+      console.info("[telegram-webhook] Received daily report retry callback.", {
+        callbackId: callbackQuery.id,
+        dateKey: dailyReportRetry.dateKey,
+      });
+
+      try {
+        await answerCallbackQuery(callbackQuery.id, "Retry started.");
+      } catch (error) {
+        if (!isExpiredTelegramCallbackError(error)) {
+          throw error;
+        }
+
+        console.warn("[telegram-webhook] Daily report retry callback answer expired.", {
+          callbackId: callbackQuery.id,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
+
+      try {
+        const { generateUploadAndNotifyDailyDriveReport, parseDailyReportDateKey } = await import(
+          "@/lib/daily-drive-report"
+        );
+        const retryDate = parseDailyReportDateKey(dailyReportRetry.dateKey);
+        const uploaded = await generateUploadAndNotifyDailyDriveReport(retryDate);
+
+        console.info("[telegram-webhook] Daily report retry finished.", {
+          dateKey: dailyReportRetry.dateKey,
+          fileId: uploaded.fileId,
+          filename: uploaded.filename,
+        });
+      } catch (error) {
+        console.error("[telegram-webhook] Daily report retry failed.", {
+          callbackId: callbackQuery.id,
+          dateKey: dailyReportRetry.dateKey,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
+
       return NextResponse.json({ ok: true });
     }
 
