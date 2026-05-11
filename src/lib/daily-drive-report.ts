@@ -16,6 +16,7 @@ const REPORT_LOCK_POLL_INTERVAL_MS = 2_000;
 const REPORT_LOCK_SETTLE_MS = 1_000;
 const REPORT_LOCK_TTL_MS = 10 * 60_000;
 const REPORT_LOCK_WAIT_MS = 75_000;
+const REPORT_PENDING_NOTIFICATION_SUFFIX = ".telegram-not-notified";
 
 class DailyReportInProgressError extends Error {
   constructor() {
@@ -361,6 +362,37 @@ async function waitForReportImage({
   return null;
 }
 
+async function renameReportImage({
+  drive,
+  fileId,
+  filename,
+  webViewLink,
+}: {
+  drive: ReturnType<typeof getDriveClient>;
+  fileId: string;
+  filename: string;
+  webViewLink: string;
+}) {
+  const renamed = await drive.files.update({
+    fields: "id, name, webViewLink",
+    fileId,
+    requestBody: {
+      name: filename,
+    },
+    supportsAllDrives: true,
+  });
+
+  if (!renamed.data.id) {
+    throw new Error("Google Drive did not return an id after renaming the daily report.");
+  }
+
+  return {
+    fileId: renamed.data.id,
+    filename: renamed.data.name ?? filename,
+    webViewLink: renamed.data.webViewLink ?? webViewLink,
+  };
+}
+
 async function findReportImages({
   drive,
   filename,
@@ -418,8 +450,63 @@ async function resolveReportFolder(date = new Date()) {
     filename,
     folderId: monthFolderId,
     month,
+    pendingFilename: `${filename}${REPORT_PENDING_NOTIFICATION_SUFFIX}`,
     year,
   };
+}
+
+async function notifyAndFinalizeReport({
+  drive,
+  folder,
+  uploaded,
+}: {
+  drive: ReturnType<typeof getDriveClient>;
+  folder: Awaited<ReturnType<typeof resolveReportFolder>>;
+  uploaded: {
+    fileId: string;
+    filename: string;
+    webViewLink: string;
+  };
+}) {
+  console.info("[daily-drive-report] Sending Telegram success notification.", {
+    fileId: uploaded.fileId,
+    filename: folder.filename,
+  });
+
+  try {
+    await sendTelegramTextMessageWithButton({
+      buttonText: "View",
+      text: [
+        "Daily report uploaded successfully.",
+        `File: ${folder.filename}`,
+        `Folder: ${folder.year}/${folder.month}`,
+      ].join("\n"),
+      url: uploaded.webViewLink,
+    });
+  } catch (error) {
+    console.error("[daily-drive-report] Telegram success notification failed.", {
+      error: error instanceof Error ? error.message : String(error),
+      fileId: uploaded.fileId,
+      filename: folder.filename,
+    });
+    throw error;
+  }
+
+  console.info("[daily-drive-report] Telegram success notification sent.");
+
+  const finalized = await renameReportImage({
+    drive,
+    fileId: uploaded.fileId,
+    filename: folder.filename,
+    webViewLink: uploaded.webViewLink,
+  });
+
+  console.info("[daily-drive-report] Report renamed after Telegram notification.", {
+    fileId: finalized.fileId,
+    filename: finalized.filename,
+  });
+
+  return finalized;
 }
 
 export async function generateUploadAndNotifyDailyDriveReport(date = new Date(), notify = true) {
@@ -438,13 +525,26 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
       filename: folder.filename,
       folderId: folder.folderId,
     });
+    const pendingFile = await findReportImage({
+      drive,
+      filename: folder.pendingFilename,
+      folderId: folder.folderId,
+    });
 
     if (existingFile) {
       console.info("[daily-drive-report] Report already exists in Google Drive.", {
         fileId: existingFile.fileId,
         filename: existingFile.filename,
+        telegramNotified: true,
       });
       return existingFile;
+    }
+
+    if (pendingFile) {
+      console.info("[daily-drive-report] Report exists but Telegram notification is pending.", {
+        fileId: pendingFile.fileId,
+        filename: pendingFile.filename,
+      });
     }
 
     const lock = await acquireReportLock({
@@ -468,6 +568,7 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
         console.info("[daily-drive-report] Report became available after waiting for active run.", {
           fileId: uploadedByOtherRun.fileId,
           filename: uploadedByOtherRun.filename,
+          telegramNotified: true,
         });
         return uploadedByOtherRun;
       }
@@ -476,6 +577,43 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
     }
 
     try {
+      const fileAfterLock = await findReportImage({
+        drive,
+        filename: folder.filename,
+        folderId: folder.folderId,
+      });
+      const pendingFileAfterLock = await findReportImage({
+        drive,
+        filename: folder.pendingFilename,
+        folderId: folder.folderId,
+      });
+
+      if (fileAfterLock) {
+        console.info("[daily-drive-report] Report already exists after lock acquired.", {
+          fileId: fileAfterLock.fileId,
+          filename: fileAfterLock.filename,
+          telegramNotified: true,
+        });
+        return fileAfterLock;
+      }
+
+      if (pendingFileAfterLock) {
+        console.info("[daily-drive-report] Report pending Telegram notification after lock acquired.", {
+          fileId: pendingFileAfterLock.fileId,
+          filename: pendingFileAfterLock.filename,
+        });
+
+        if (notify) {
+          return await notifyAndFinalizeReport({
+            drive,
+            folder,
+            uploaded: pendingFileAfterLock,
+          });
+        }
+
+        return pendingFileAfterLock;
+      }
+
       const buffer = await createCombinedDailyReportImage(date);
       console.info("[daily-drive-report] Combined report image generated.", {
         bytes: buffer.byteLength,
@@ -484,7 +622,7 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
 
       const uploaded = await uploadReportImage({
         buffer,
-        filename: folder.filename,
+        filename: notify ? folder.pendingFilename : folder.filename,
         folderId: folder.folderId,
       });
       console.info("[daily-drive-report] Report uploaded to Google Drive.", {
@@ -493,30 +631,11 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
         status: uploaded.status,
       });
 
-      const firstReportFile = await findReportImage({
-        drive,
-        filename: folder.filename,
-        folderId: folder.folderId,
-      });
-      const shouldNotifySuccess =
-        uploaded.status === "created" && firstReportFile?.fileId === uploaded.fileId;
-
-      if (notify && shouldNotifySuccess) {
-        await sendTelegramTextMessageWithButton({
-          buttonText: "View",
-          text: [
-            "Daily report uploaded successfully.",
-            `File: ${uploaded.filename}`,
-            `Folder: ${folder.year}/${folder.month}`,
-          ].join("\n"),
-          url: uploaded.webViewLink,
-        });
-        console.info("[daily-drive-report] Telegram success notification sent.");
-      } else if (notify) {
-        console.info("[daily-drive-report] Telegram success notification skipped.", {
-          firstFileId: firstReportFile?.fileId ?? null,
-          uploadedFileId: uploaded.fileId,
-          uploadStatus: uploaded.status,
+      if (notify) {
+        return await notifyAndFinalizeReport({
+          drive,
+          folder,
+          uploaded,
         });
       }
 
