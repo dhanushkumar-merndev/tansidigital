@@ -11,19 +11,6 @@ import {
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 const IST_TIME_ZONE = "Asia/Kolkata";
-const REPORT_LOCK_MIME_TYPE = "text/plain";
-const REPORT_LOCK_POLL_INTERVAL_MS = 2_000;
-const REPORT_LOCK_SETTLE_MS = 1_000;
-const REPORT_LOCK_TTL_MS = 10 * 60_000;
-const REPORT_LOCK_WAIT_MS = 75_000;
-const REPORT_PENDING_NOTIFICATION_SUFFIX = ".telegram-not-notified";
-
-class DailyReportInProgressError extends Error {
-  constructor() {
-    super("Another daily report generation is still running.");
-    this.name = "DailyReportInProgressError";
-  }
-}
 
 function getRequiredEnv(name: string) {
   const value = process.env[name]?.trim();
@@ -69,12 +56,6 @@ function getDriveClient() {
 
 function escapeDriveQueryValue(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function getIstParts(date = new Date()) {
@@ -210,189 +191,6 @@ async function uploadReportImage({
   };
 }
 
-async function findActiveReportLocks({
-  drive,
-  folderId,
-  lockName,
-}: {
-  drive: ReturnType<typeof getDriveClient>;
-  folderId: string;
-  lockName: string;
-}) {
-  const escapedLockName = escapeDriveQueryValue(lockName);
-  const escapedFolderId = escapeDriveQueryValue(folderId);
-  const existing = await drive.files.list({
-    fields: "files(id, name, createdTime)",
-    includeItemsFromAllDrives: true,
-    orderBy: "createdTime",
-    q: [
-      `name = '${escapedLockName}'`,
-      `mimeType = '${REPORT_LOCK_MIME_TYPE}'`,
-      `'${escapedFolderId}' in parents`,
-      "trashed = false",
-    ].join(" and "),
-    supportsAllDrives: true,
-  });
-  const now = Date.now();
-
-  return (existing.data.files ?? [])
-    .filter((file) => file.id && file.createdTime)
-    .map((file) => ({
-      createdAtMs: new Date(file.createdTime as string).getTime(),
-      createdTime: file.createdTime as string,
-      fileId: file.id as string,
-    }))
-    .filter((lock) => now - lock.createdAtMs < REPORT_LOCK_TTL_MS)
-    .sort((left, right) => left.createdAtMs - right.createdAtMs);
-}
-
-async function deleteDriveFileQuietly({
-  drive,
-  fileId,
-}: {
-  drive: ReturnType<typeof getDriveClient>;
-  fileId: string;
-}) {
-  try {
-    await drive.files.delete({
-      fileId,
-      supportsAllDrives: true,
-    });
-  } catch (error) {
-    console.warn("[daily-drive-report] Failed to delete report lock.", {
-      error: error instanceof Error ? error.message : String(error),
-      fileId,
-    });
-  }
-}
-
-async function acquireReportLock({
-  drive,
-  folderId,
-  lockName,
-}: {
-  drive: ReturnType<typeof getDriveClient>;
-  folderId: string;
-  lockName: string;
-}) {
-  const activeLocks = await findActiveReportLocks({
-    drive,
-    folderId,
-    lockName,
-  });
-  const existingLock = activeLocks[0] ?? null;
-
-  if (existingLock) {
-    return {
-      acquired: false as const,
-      ownerFileId: existingLock.fileId,
-    };
-  }
-
-  const created = await drive.files.create({
-    fields: "id",
-    media: {
-      body: Readable.from(Buffer.from(new Date().toISOString())),
-      mimeType: REPORT_LOCK_MIME_TYPE,
-    },
-    requestBody: {
-      mimeType: REPORT_LOCK_MIME_TYPE,
-      name: lockName,
-      parents: [folderId],
-    },
-    supportsAllDrives: true,
-  });
-
-  if (!created.data.id) {
-    throw new Error("Google Drive did not return an id for the daily report lock.");
-  }
-
-  await wait(REPORT_LOCK_SETTLE_MS);
-
-  const settledLocks = await findActiveReportLocks({
-    drive,
-    folderId,
-    lockName,
-  });
-  const ownerLock = settledLocks[0] ?? null;
-
-  if (ownerLock?.fileId === created.data.id) {
-    return {
-      acquired: true as const,
-      fileId: created.data.id,
-    };
-  }
-
-  await deleteDriveFileQuietly({
-    drive,
-    fileId: created.data.id,
-  });
-
-  return {
-    acquired: false as const,
-    ownerFileId: ownerLock?.fileId ?? null,
-  };
-}
-
-async function waitForReportImage({
-  drive,
-  filename,
-  folderId,
-}: {
-  drive: ReturnType<typeof getDriveClient>;
-  filename: string;
-  folderId: string;
-}) {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < REPORT_LOCK_WAIT_MS) {
-    const existingFile = await findReportImage({
-      drive,
-      filename,
-      folderId,
-    });
-
-    if (existingFile) {
-      return existingFile;
-    }
-
-    await wait(REPORT_LOCK_POLL_INTERVAL_MS);
-  }
-
-  return null;
-}
-
-async function renameReportImage({
-  drive,
-  fileId,
-  filename,
-  webViewLink,
-}: {
-  drive: ReturnType<typeof getDriveClient>;
-  fileId: string;
-  filename: string;
-  webViewLink: string;
-}) {
-  const renamed = await drive.files.update({
-    fields: "id, name, webViewLink",
-    fileId,
-    requestBody: {
-      name: filename,
-    },
-    supportsAllDrives: true,
-  });
-
-  if (!renamed.data.id) {
-    throw new Error("Google Drive did not return an id after renaming the daily report.");
-  }
-
-  return {
-    fileId: renamed.data.id,
-    filename: renamed.data.name ?? filename,
-    webViewLink: renamed.data.webViewLink ?? webViewLink,
-  };
-}
-
 async function findReportImages({
   drive,
   filename,
@@ -450,17 +248,14 @@ async function resolveReportFolder(date = new Date()) {
     filename,
     folderId: monthFolderId,
     month,
-    pendingFilename: `${filename}${REPORT_PENDING_NOTIFICATION_SUFFIX}`,
     year,
   };
 }
 
 async function notifyAndFinalizeReport({
-  drive,
   folder,
   uploaded,
 }: {
-  drive: ReturnType<typeof getDriveClient>;
   folder: Awaited<ReturnType<typeof resolveReportFolder>>;
   uploaded: {
     fileId: string;
@@ -494,19 +289,7 @@ async function notifyAndFinalizeReport({
 
   console.info("[daily-drive-report] Telegram success notification sent.");
 
-  const finalized = await renameReportImage({
-    drive,
-    fileId: uploaded.fileId,
-    filename: folder.filename,
-    webViewLink: uploaded.webViewLink,
-  });
-
-  console.info("[daily-drive-report] Report renamed after Telegram notification.", {
-    fileId: finalized.fileId,
-    filename: finalized.filename,
-  });
-
-  return finalized;
+  return uploaded;
 }
 
 export async function generateUploadAndNotifyDailyDriveReport(date = new Date(), notify = true) {
@@ -525,11 +308,6 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
       filename: folder.filename,
       folderId: folder.folderId,
     });
-    const pendingFile = await findReportImage({
-      drive,
-      filename: folder.pendingFilename,
-      folderId: folder.folderId,
-    });
 
     if (existingFile) {
       console.info("[daily-drive-report] Report already exists in Google Drive.", {
@@ -540,119 +318,39 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
       return existingFile;
     }
 
-    if (pendingFile) {
-      console.info("[daily-drive-report] Report exists but Telegram notification is pending.", {
-        fileId: pendingFile.fileId,
-        filename: pendingFile.filename,
-      });
-    }
-
-    const lock = await acquireReportLock({
-      drive,
-      folderId: folder.folderId,
-      lockName: `${folder.filename}.lock`,
+    const buffer = await createCombinedDailyReportImage(date);
+    console.info("[daily-drive-report] Combined report image generated.", {
+      bytes: buffer.byteLength,
+      filename: folder.filename,
     });
 
-    if (!lock.acquired) {
-      console.info("[daily-drive-report] Another daily report generation is already running.", {
-        ownerLockFileId: lock.ownerFileId,
-      });
+    const uploaded = await uploadReportImage({
+      buffer,
+      filename: folder.filename,
+      folderId: folder.folderId,
+    });
+    
+    console.info("[daily-drive-report] Report uploaded to Google Drive.", {
+      fileId: uploaded.fileId,
+      filename: uploaded.filename,
+      status: uploaded.status,
+    });
 
-      const uploadedByOtherRun = await waitForReportImage({
-        drive,
-        filename: folder.filename,
-        folderId: folder.folderId,
-      });
-
-      if (uploadedByOtherRun) {
-        console.info("[daily-drive-report] Report became available after waiting for active run.", {
-          fileId: uploadedByOtherRun.fileId,
-          filename: uploadedByOtherRun.filename,
-          telegramNotified: true,
-        });
-        return uploadedByOtherRun;
-      }
-
-      throw new DailyReportInProgressError();
-    }
-
-    try {
-      const fileAfterLock = await findReportImage({
-        drive,
-        filename: folder.filename,
-        folderId: folder.folderId,
-      });
-      const pendingFileAfterLock = await findReportImage({
-        drive,
-        filename: folder.pendingFilename,
-        folderId: folder.folderId,
-      });
-
-      if (fileAfterLock) {
-        console.info("[daily-drive-report] Report already exists after lock acquired.", {
-          fileId: fileAfterLock.fileId,
-          filename: fileAfterLock.filename,
-          telegramNotified: true,
-        });
-        return fileAfterLock;
-      }
-
-      if (pendingFileAfterLock) {
-        console.info("[daily-drive-report] Report pending Telegram notification after lock acquired.", {
-          fileId: pendingFileAfterLock.fileId,
-          filename: pendingFileAfterLock.filename,
-        });
-
-        if (notify) {
-          return await notifyAndFinalizeReport({
-            drive,
-            folder,
-            uploaded: pendingFileAfterLock,
-          });
-        }
-
-        return pendingFileAfterLock;
-      }
-
-      const buffer = await createCombinedDailyReportImage(date);
-      console.info("[daily-drive-report] Combined report image generated.", {
-        bytes: buffer.byteLength,
-        filename: folder.filename,
-      });
-
-      const uploaded = await uploadReportImage({
-        buffer,
-        filename: notify ? folder.pendingFilename : folder.filename,
-        folderId: folder.folderId,
-      });
-      console.info("[daily-drive-report] Report uploaded to Google Drive.", {
-        fileId: uploaded.fileId,
-        filename: uploaded.filename,
-        status: uploaded.status,
-      });
-
-      if (notify) {
-        return await notifyAndFinalizeReport({
-          drive,
-          folder,
-          uploaded,
-        });
-      }
-
-      return uploaded;
-    } finally {
-      await deleteDriveFileQuietly({
-        drive,
-        fileId: lock.fileId,
+    if (notify) {
+      return await notifyAndFinalizeReport({
+        folder,
+        uploaded,
       });
     }
+
+    return uploaded;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[daily-drive-report] Failed to generate or upload report.", {
       error: message,
     });
 
-    if (notify && !(error instanceof DailyReportInProgressError)) {
+    if (notify) {
       try {
         await sendTelegramTextMessageWithCallbackButton({
           buttonText: "Retry",
