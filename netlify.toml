@@ -1,2 +1,3 @@
 [functions."daily-report"]
 schedule = "30 3 * * *"
+timeout = 60

@@ -318,8 +318,9 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
       return existingFile;
     }
 
+    console.info("[daily-drive-report] Generating combined report image (this may take 20-40s)...");
     const buffer = await createCombinedDailyReportImage(date);
-    console.info("[daily-drive-report] Combined report image generated.", {
+    console.info("[daily-drive-report] Combined report image generated successfully.", {
       bytes: buffer.byteLength,
       filename: folder.filename,
     });
@@ -337,11 +338,14 @@ export async function generateUploadAndNotifyDailyDriveReport(date = new Date(),
     });
 
     if (notify) {
+      console.info("[daily-drive-report] Triggering Telegram notification step...");
       return await notifyAndFinalizeReport({
         folder,
         uploaded,
       });
     }
+
+    console.info("[daily-drive-report] Report process completed (notification skipped).");
 
     return uploaded;
   } catch (error) {

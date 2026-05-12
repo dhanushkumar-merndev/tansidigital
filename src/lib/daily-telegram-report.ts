@@ -302,9 +302,9 @@ function buildBrandReport(
           ...dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === "redwing"),
         ]
       : dashboard.tabs.filter((tab) => dashboard.tabBrandLookup[tab] === brand);
-  const exportTabs = relevantTabs.filter(
-    (tab) => !takingCampaignTabs || takingCampaignTabs.has(normalizeCampaignKey(tab)),
-  );
+  const exportTabs = (takingCampaignTabs && takingCampaignTabs.size > 0)
+      ? relevantTabs.filter((tab) => takingCampaignTabs.has(normalizeCampaignKey(tab)))
+      : relevantTabs;
   const columns = exportTabs.map((tab) => ({
     brand: dashboard.tabBrandLookup[tab] === "bigwing" ? ("bigwing" as const) : ("redwing" as const),
     label: dashboard.tabLabels[tab] || tab,
@@ -383,7 +383,7 @@ async function createReportImage(report: BrandReport) {
     : "rgba(255,255,255,0.12)";
   const rowEven = isBigwingTheme ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.05)";
   const rowOdd = isBigwingTheme ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.03)";
-  const border = "rgba(255,255,255,0.18)";
+  const border = "rgba(255,255,255,0.25)";
 
   const scale = 12;
   const paddingX = Math.round(44 * scale);
@@ -411,6 +411,7 @@ async function createReportImage(report: BrandReport) {
   const context = canvas.getContext("2d");
   context.fillStyle = background;
   context.fillRect(0, 0, width, height);
+  context.lineWidth = 1 * scale; // Ensure border thickness scales with the image size
 
   const left = paddingX;
   let cursorY = paddingY;
