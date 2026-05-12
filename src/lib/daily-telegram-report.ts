@@ -385,7 +385,7 @@ async function createReportImage(report: BrandReport) {
   const rowOdd = isBigwingTheme ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.03)";
   const border = "rgba(255,255,255,0.25)";
 
-  const scale = 12;
+  const scale = 10;
   const paddingX = Math.round(44 * scale);
   const paddingY = Math.round(38 * scale);
   const titleHeight = Math.round(56 * scale);
