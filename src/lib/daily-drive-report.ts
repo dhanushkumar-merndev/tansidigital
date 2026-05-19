@@ -263,28 +263,42 @@ async function notifyAndFinalizeReport({
     webViewLink: string;
   };
 }) {
-  console.info("[daily-drive-report] Verifying no duplicate upload happened.", {
+  console.info("[daily-drive-report] Checking for concurrent duplicates.", {
     fileId: uploaded.fileId,
     filename: folder.filename,
   });
 
   const drive = getDriveClient();
-  const allVersions = await findReportImages({
-    drive,
-    filename: folder.filename,
-    folderId: folder.folderId,
-  });
-  const earlier = allVersions.find(
-    (f) => f.fileId !== uploaded.fileId && f.createdTime < new Date().toISOString(),
-  );
 
-  if (earlier) {
-    console.info("[daily-drive-report] Duplicate upload detected — removing ours.", {
-      ourFileId: uploaded.fileId,
-      existingFileId: earlier.fileId,
-    });
-    await drive.files.delete({ fileId: uploaded.fileId, supportsAllDrives: true });
-    return earlier;
+  // Retry file listing with backoff — Drive has eventual consistency
+  let allVersions = await findReportImages({ drive, filename: folder.filename, folderId: folder.folderId });
+
+  for (let attempt = 0; attempt < 3 && allVersions.length < 2; attempt++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    allVersions = await findReportImages({ drive, filename: folder.filename, folderId: folder.folderId });
+  }
+
+  if (allVersions.length > 1) {
+    const sorted = [...allVersions].sort((a, b) => a.createdTime.localeCompare(b.createdTime));
+    const oldest = sorted[0];
+
+    if (oldest.fileId !== uploaded.fileId) {
+      console.info("[daily-drive-report] Concurrent duplicate detected — removing ours.", {
+        ourFileId: uploaded.fileId,
+        keptFileId: oldest.fileId,
+      });
+      await drive.files.delete({ fileId: uploaded.fileId, supportsAllDrives: true });
+      return oldest;
+    }
+
+    // We're the oldest — clean up newer duplicates from concurrent runs
+    for (const dup of sorted.slice(1)) {
+      try {
+        await drive.files.delete({ fileId: dup.fileId, supportsAllDrives: true });
+      } catch {
+        // Race: another invocation may have already deleted it
+      }
+    }
   }
 
   console.info("[daily-drive-report] Sending Telegram success notification.", {

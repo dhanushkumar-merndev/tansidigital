@@ -22,11 +22,14 @@ import {
   Clipboard,
   Download,
   FileUp,
+  Heart,
   IndianRupee,
   KeyRound,
   Loader2,
   LoaderCircle,
   LogOut,
+  Percent,
+  Phone,
   Search,
   Sparkles,
   Target,
@@ -1467,6 +1470,56 @@ export function DashboardClient({
     });
   }, [dateRange, workbook.digitalLeads]);
 
+  const digitalPerformanceCards = React.useMemo<DashboardCard[]>(() => {
+    const totalActual = filteredDigitalLeads.reduce((sum, e) => sum + e.actual, 0);
+    const totalContacted = filteredDigitalLeads.reduce((sum, e) => sum + e.contacted, 0);
+    const totalNonContacted = filteredDigitalLeads.reduce((sum, e) => sum + e.nonContacted, 0);
+    const totalInterested = filteredDigitalLeads.reduce((sum, e) => sum + e.interested, 0);
+    const conversionRate = totalActual > totalNonContacted ? (totalInterested / (totalActual - totalNonContacted)) * 100 : 0;
+
+    return [
+      {
+        animate: true,
+        hint: "",
+        icon: Users,
+        label: "Total Leads (Actual)",
+        numericValue: totalActual,
+        value: formatCompactNumber(totalActual),
+      },
+      {
+        animate: true,
+        hint: "",
+        icon: Phone,
+        label: "Total Called",
+        numericValue: totalContacted,
+        value: formatCompactNumber(totalContacted),
+      },
+      {
+        animate: true,
+        hint: "",
+        icon: X,
+        label: "Non Contacted",
+        numericValue: totalNonContacted,
+        value: formatCompactNumber(totalNonContacted),
+      },
+      {
+        animate: true,
+        hint: "",
+        icon: Heart,
+        label: "Total Interested",
+        numericValue: totalInterested,
+        value: formatCompactNumber(totalInterested),
+      },
+      {
+        animate: true,
+        hint: "",
+        icon: Percent,
+        label: "Conversion Rate",
+        value: `${conversionRate.toFixed(1)}%`,
+      },
+    ];
+  }, [filteredDigitalLeads]);
+
   const currentRangeFrom = dateRange?.from;
   const currentRangeTo = dateRange?.to;
   const isSingleDayRange = Boolean(
@@ -2684,6 +2737,7 @@ export function DashboardClient({
                       <Legend wrapperStyle={{ fontSize: "10px", marginTop: "10px" }} />
                       <Line type="monotone" dataKey="actual" name="Actual" stroke="#ffffff" strokeWidth={2} dot={false} isAnimationActive={false} />
                       <Line type="monotone" dataKey="contacted" name="Contacted" stroke="#8de0ff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                      <Line type="monotone" dataKey="nonContacted" name="Non Contacted" stroke="#ffb4b4" strokeWidth={2} dot={false} isAnimationActive={false} />
                       <Line type="monotone" dataKey="interested" name="Interested" stroke="#eefbff" strokeWidth={2} dot={false} isAnimationActive={false} />
                     </LineChart>
                   </ResponsiveContainer>
@@ -2693,6 +2747,53 @@ export function DashboardClient({
                   </div>
                 )}
               </div>
+
+              {digitalPerformanceCards.length > 0 ? (
+                <section className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-5">
+                  {digitalPerformanceCards.map((card) =>
+                    card.label === "Conversion Rate" ? (
+                      <Popover key={card.label}>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="w-full text-left crm-surface-radius border border-white/14 bg-white/10 p-3.5 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-xl transition hover:border-white/28 hover:bg-white/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/45 sm:p-4"
+                          >
+                            <div className="mb-2 flex items-center justify-between sm:mb-4">
+                              <span className="text-[11px] uppercase tracking-tight text-white/62 sm:text-sm">
+                                {card.label}
+                              </span>
+                              <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-white/10 sm:h-10 sm:w-10 sm:rounded-2xl">
+                                <Percent className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                              </div>
+                            </div>
+                            <div className="text-xl font-semibold tracking-tight tabular-nums text-white sm:text-3xl">
+                              {card.value}
+                            </div>
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="center"
+                          className="w-[280px] rounded-[22px] border border-white/28 bg-white/14 p-4 text-white shadow-[0_20px_60px_rgba(15,5,7,0.2)] ring-0 backdrop-blur-2xl"
+                        >
+                          <div className="space-y-2">
+                            <p className="text-xs leading-5 text-white/68">
+                              Conversion rate ={" "}
+                              <span className="font-semibold text-white">interested</span>
+                              {" "}÷ ({" "}
+                              <span className="font-semibold text-white">total leads</span>
+                              {" "}−{" "}
+                              <span className="font-semibold text-white">non contacted</span>
+                              {" "})
+                            </p>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    ) : (
+                      <DashboardStatCard key={card.label} card={card} />
+                    ),
+                  )}
+                </section>
+              ) : null}
             </div>
           ) : null}
 
