@@ -7,17 +7,14 @@ const dailyReport = async () => {
     return Response.json({
       fileId: uploaded.fileId,
       filename: uploaded.filename,
+      status: uploaded.status,
       ok: true,
       webViewLink: uploaded.webViewLink,
     });
   } catch (error) {
-    return Response.json(
-      {
-        error: error instanceof Error ? error.message : String(error),
-        ok: false,
-      },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[daily-report] Failed:", message);
+    return Response.json({ error: message, ok: false }, { status: 500 });
   }
 };
 

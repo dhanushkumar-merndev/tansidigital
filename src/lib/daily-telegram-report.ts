@@ -34,20 +34,16 @@ type RequestedCampaign = {
 const REPORT_FONT_FAMILY = "Digital Leads Report Sans";
 const REPORT_SYMBOL_FONT_FAMILY = "Digital Leads Report Symbols";
 const REPORT_PRIMARY_FONT_PATHS = [
-  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "Avenir LT Std 55 Roman.otf"),
-  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "report-font.ttf"),
-  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "report-font.ttf"),
-  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "DigitalLeads.ttf"),
   join(/*turbopackIgnore: true*/ process.cwd(), "public", "fonts", "report-font.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "report-font.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "Avenir LT Std 55 Roman.otf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "DigitalLeads.ttf"),
 ];
 const REPORT_SYMBOL_FONT_PATHS = [
-  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "NotoSans-Regular.ttf"),
-  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "NotoSans-Regular.ttf"),
   join(/*turbopackIgnore: true*/ process.cwd(), "public", "fonts", "NotoSans-Regular.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "fonts", "NotoSans-Regular.ttf"),
+  join(/*turbopackIgnore: true*/ process.cwd(), "netlify", "font", "NotoSans-Regular.ttf"),
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-  "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-  "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-  "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ];
 
 let resolvedReportFontFamily = "sans-serif";
@@ -385,7 +381,7 @@ async function createReportImage(report: BrandReport) {
   const rowOdd = isBigwingTheme ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.03)";
   const border = "rgba(255,255,255,0.25)";
 
-  const scale = 10;
+  const scale = 6;
   const paddingX = Math.round(44 * scale);
   const paddingY = Math.round(38 * scale);
   const titleHeight = Math.round(56 * scale);

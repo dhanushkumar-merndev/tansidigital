@@ -1746,7 +1746,12 @@ export function DashboardClient({
         totalRowHeight +
         leadTotalRowHeight;
       const canvas = document.createElement("canvas");
-      const pixelRatio = 4;
+      const pixelRatio =
+        digitalLeadsExportTable.rows.length > 20 || digitalLeadsExportTable.columns.length > 10
+          ? 2
+          : digitalLeadsExportTable.rows.length > 10 || digitalLeadsExportTable.columns.length > 6
+            ? 3
+            : 4;
 
       canvas.width = Math.round(canvasWidth * pixelRatio);
       canvas.height = Math.round(canvasHeight * pixelRatio);

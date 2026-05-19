@@ -263,6 +263,30 @@ async function notifyAndFinalizeReport({
     webViewLink: string;
   };
 }) {
+  console.info("[daily-drive-report] Verifying no duplicate upload happened.", {
+    fileId: uploaded.fileId,
+    filename: folder.filename,
+  });
+
+  const drive = getDriveClient();
+  const allVersions = await findReportImages({
+    drive,
+    filename: folder.filename,
+    folderId: folder.folderId,
+  });
+  const earlier = allVersions.find(
+    (f) => f.fileId !== uploaded.fileId && f.createdTime < new Date().toISOString(),
+  );
+
+  if (earlier) {
+    console.info("[daily-drive-report] Duplicate upload detected — removing ours.", {
+      ourFileId: uploaded.fileId,
+      existingFileId: earlier.fileId,
+    });
+    await drive.files.delete({ fileId: uploaded.fileId, supportsAllDrives: true });
+    return earlier;
+  }
+
   console.info("[daily-drive-report] Sending Telegram success notification.", {
     fileId: uploaded.fileId,
     filename: folder.filename,
