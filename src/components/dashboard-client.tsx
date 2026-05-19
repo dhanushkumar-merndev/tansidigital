@@ -639,6 +639,27 @@ function wrapCanvasText(
   return lines;
 }
 
+function roundCanvasRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
 function aggregateMetricByTab(
   summaries: DashboardDailySummary[],
   selector: (summary: DashboardDailySummary) => Record<string, number>,
@@ -761,6 +782,7 @@ export function DashboardClient({
   const [isPending, startTransition] = useTransition();
   const [isBrandPending, startBrandTransition] = useTransition();
   const [isExportingDigitalLeads, setIsExportingDigitalLeads] = React.useState(false);
+  const [isExportingDigitalPerformance, setIsExportingDigitalPerformance] = React.useState(false);
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isMounted, setIsMounted] = React.useState(false);
   const [isDesktop, setIsDesktop] = React.useState(false);
@@ -2036,6 +2058,73 @@ export function DashboardClient({
     }
   }
 
+  async function handleExportDigitalPerformanceImage() {
+    if (isExportingDigitalPerformance || filteredDigitalLeads.length === 0) return;
+
+    setIsExportingDigitalPerformance(true);
+
+    try {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
+      const el = document.getElementById("digital-performance-section");
+      if (!el) throw new Error("Digital performance section not found.");
+
+      const { domToPng } = await import("modern-screenshot");
+      const dataUrl = await domToPng(el, {
+        scale: 4,
+        backgroundColor: "#0D4D8B",
+          width: el.offsetWidth + 80,
+          height: el.offsetHeight + 80,
+          style: {
+            marginTop: "40px",
+            marginLeft: "40px",
+            marginRight: "40px",
+            marginBottom: "40px",
+            width: `${el.offsetWidth}px`,
+            height: `${el.offsetHeight}px`,
+          } as Partial<CSSStyleDeclaration>,
+        filter: (node) => {
+          if (
+            node instanceof HTMLElement &&
+            node.getAttribute("aria-label") === "Export digital performance PNG"
+          ) {
+            return false;
+          }
+          return true;
+        },
+        onCloneNode: (cloned) => {
+          if (cloned instanceof HTMLElement) {
+            cloned.style.setProperty("backdrop-filter", "none");
+            cloned.style.setProperty("-webkit-backdrop-filter", "none");
+            cloned.style.backfaceVisibility = "visible";
+            cloned.style.transform = "none";
+            cloned.style.transformStyle = "flat";
+            cloned.style.removeProperty("will-change");
+          }
+        },
+        onCloneEachNode: (cloned) => {
+          if (cloned instanceof HTMLElement) {
+            cloned.style.setProperty("backdrop-filter", "none");
+            cloned.style.setProperty("-webkit-backdrop-filter", "none");
+            cloned.style.backfaceVisibility = "visible";
+            cloned.style.transform = "none";
+            cloned.style.transformStyle = "flat";
+            cloned.style.removeProperty("will-change");
+          }
+        },
+      });
+
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = `digital-performance-${getIstDateKey(new Date())}.png`;
+      link.click();
+    } finally {
+      setIsExportingDigitalPerformance(false);
+    }
+  }
+
   async function handleLogout() {
     if (isLoggingOut) return;
 
@@ -2703,12 +2792,29 @@ export function DashboardClient({
           </section>
 
           {brand === "redwing" ? (
-            <div className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
-              <div className="mb-3 sm:mb-6">
-                <h2 className="text-xl font-semibold">Digital performance</h2>
-                <p className="mt-1 text-sm text-white/58">
-                  Trends for actual, contacted, and interested digital leads.
-                </p>
+            <div id="digital-performance-section" className="crm-surface-radius border border-white/14 bg-white/10 p-4 shadow-[0_40px_120px_rgba(0,0,0,0.3)] backdrop-blur-2xl sm:p-5">
+              <div className="mb-3 flex items-start justify-between gap-4 sm:mb-6">
+                <div>
+                  <h2 className="text-xl font-semibold">Digital performance</h2>
+                  <p className="mt-1 text-sm text-white/58">
+                    Trends for actual, contacted, and interested digital leads.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 rounded-full border border-white/12 bg-white/8 text-white/82 shadow-none backdrop-blur-xl hover:bg-white/8 hover:text-white"
+                  onClick={handleExportDigitalPerformanceImage}
+                  disabled={isExportingDigitalPerformance || filteredDigitalLeads.length === 0}
+                  aria-busy={isExportingDigitalPerformance}
+                  aria-label="Export digital performance PNG"
+                >
+                  {isExportingDigitalPerformance ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                </Button>
               </div>
               <div className="crm-gpu-layer h-[340px] min-w-0">
                 {filteredDigitalLeads.length > 0 && isMounted ? (
